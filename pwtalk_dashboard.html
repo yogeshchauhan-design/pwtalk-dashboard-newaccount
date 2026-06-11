@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PW Talk · Performance Dashboard</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0d0f14;
+    --surface: #161820;
+    --surface2: #1e2028;
+    --border: #2a2d38;
+    --border2: #363945;
+    --text: #e8eaf0;
+    --text2: #9095a8;
+    --text3: #5a5f72;
+    --accent: #6c63ff;
+    --accent2: #8b83ff;
+    --green: #22c55e;
+    --green-bg: rgba(34,197,94,0.1);
+    --amber: #f59e0b;
+    --amber-bg: rgba(245,158,11,0.1);
+    --red: #ef4444;
+    --red-bg: rgba(239,68,68,0.1);
+    --blue: #3b82f6;
+    --blue-bg: rgba(59,130,246,0.1);
+    --font: 'Inter', sans-serif;
+    --mono: 'JetBrains Mono', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 13px; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); min-height: 100vh; }
+
+  /* LAYOUT */
+  .app { display: flex; flex-direction: column; min-height: 100vh; }
+  .topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+  .topbar-left { display: flex; align-items: center; gap: 16px; }
+  .logo { font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
+  .logo span { color: var(--accent2); }
+  .badge { background: var(--accent); color: #fff; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 20px; letter-spacing: 0.3px; }
+  .topbar-right { display: flex; align-items: center; gap: 10px; }
+  .last-updated { color: var(--text3); font-size: 11px; font-family: var(--mono); }
+
+  .main { display: flex; flex: 1; }
+  .sidebar { width: 200px; background: var(--surface); border-right: 1px solid var(--border); padding: 20px 0; flex-shrink: 0; position: sticky; top: 57px; height: calc(100vh - 57px); overflow-y: auto; }
+  .sidebar-section { padding: 0 12px; margin-bottom: 4px; }
+  .sidebar-label { font-size: 10px; font-weight: 600; color: var(--text3); letter-spacing: 1px; text-transform: uppercase; padding: 8px 8px 6px; }
+  .nav-item { display: flex; align-items: center; gap: 8px; padding: 8px 8px; border-radius: 6px; cursor: pointer; color: var(--text2); font-size: 12px; font-weight: 500; transition: all 0.15s; margin-bottom: 1px; }
+  .nav-item:hover { background: var(--surface2); color: var(--text); }
+  .nav-item.active { background: rgba(108,99,255,0.15); color: var(--accent2); }
+  .nav-item .icon { font-size: 14px; width: 18px; text-align: center; }
+
+  .content { flex: 1; padding: 20px 24px; overflow-x: auto; }
+
+  /* DATE FILTER */
+  .date-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  .date-bar label { font-size: 11px; color: var(--text2); font-weight: 500; }
+  .date-input { background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 11px; padding: 6px 10px; border-radius: 6px; }
+  .btn { background: var(--surface2); border: 1px solid var(--border2); color: var(--text); font-size: 11px; font-weight: 500; padding: 6px 12px; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
+  .btn:hover { background: var(--border); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent2); }
+  .btn.active-preset { background: rgba(108,99,255,0.2); border-color: var(--accent); color: var(--accent2); }
+
+  /* ALERTS */
+  .alerts-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; margin-bottom: 20px; }
+  .alerts-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .alerts-title { font-size: 12px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
+  .alert-count { background: var(--red); color: #fff; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 10px; }
+  .alerts-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .alert-chip { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: 500; }
+  .alert-chip.red { background: var(--red-bg); color: var(--red); border: 1px solid rgba(239,68,68,0.2); }
+  .alert-chip.amber { background: var(--amber-bg); color: var(--amber); border: 1px solid rgba(245,158,11,0.2); }
+  .alert-chip.blue { background: var(--blue-bg); color: var(--blue); border: 1px solid rgba(59,130,246,0.2); }
+
+  /* SUMMARY CARDS */
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 20px; }
+  .summary-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .card-label { font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .card-value { font-size: 20px; font-weight: 700; color: var(--text); font-family: var(--mono); line-height: 1; margin-bottom: 5px; }
+  .card-value.green { color: var(--green); }
+  .card-value.amber { color: var(--amber); }
+  .card-value.red { color: var(--red); }
+  .card-trend { font-size: 10px; color: var(--text3); }
+  .trend-up { color: var(--green); }
+  .trend-down { color: var(--red); }
+
+  /* TABS */
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px; width: fit-content; }
+  .tab { padding: 7px 16px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 500; color: var(--text2); transition: all 0.15s; }
+  .tab.active { background: var(--accent); color: #fff; }
+  .tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
+
+  /* TABLE */
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .table-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 8px; }
+  .table-title { font-size: 13px; font-weight: 600; }
+  .table-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .search-input { background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-size: 11px; padding: 5px 10px; border-radius: 6px; width: 180px; }
+  .search-input::placeholder { color: var(--text3); }
+
+  .cohort-toggle { display: flex; align-items: center; gap: 6px; }
+  .cohort-label { font-size: 11px; color: var(--text2); font-weight: 500; }
+  .cohort-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text2); font-size: 10px; font-weight: 600; padding: 4px 8px; border-radius: 5px; cursor: pointer; transition: all 0.15s; font-family: var(--mono); }
+  .cohort-btn.active { background: rgba(108,99,255,0.2); border-color: var(--accent); color: var(--accent2); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  thead th { background: var(--surface2); padding: 9px 12px; text-align: left; font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; cursor: pointer; user-select: none; border-bottom: 1px solid var(--border); position: sticky; top: 0; }
+  thead th:hover { color: var(--text2); }
+  thead th .sort-icon { margin-left: 4px; opacity: 0.4; }
+  thead th.sorted .sort-icon { opacity: 1; color: var(--accent2); }
+
+  tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: rgba(255,255,255,0.02); }
+  tbody tr.expandable-parent { cursor: pointer; }
+  tbody td { padding: 9px 12px; color: var(--text); white-space: nowrap; }
+  tbody td.name-cell { max-width: 240px; overflow: hidden; text-overflow: ellipsis; color: var(--text2); font-weight: 500; }
+  tbody td.name-cell:hover { color: var(--text); }
+
+  .pill { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 600; font-family: var(--mono); }
+  .pill.green { background: var(--green-bg); color: var(--green); }
+  .pill.amber { background: var(--amber-bg); color: var(--amber); }
+  .pill.red { background: var(--red-bg); color: var(--red); }
+  .pill.neutral { background: rgba(255,255,255,0.05); color: var(--text2); }
+  .pill.early { background: rgba(255,255,255,0.03); color: var(--text3); font-size: 9px; }
+
+  .flag-icon { font-size: 12px; margin-left: 4px; }
+
+  /* COHORT SECTION */
+  .cohort-section { display: none; }
+  .cohort-section.visible { display: table-row; }
+  .cohort-inner { background: var(--bg); padding: 12px 16px 12px 40px; }
+  .cohort-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; margin-top: 6px; }
+  .cohort-cell { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .cohort-cell-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+  .cohort-cell-value { font-size: 13px; font-weight: 600; font-family: var(--mono); }
+
+  /* TREND SECTION in table */
+  .trend-cell { display: flex; flex-direction: column; gap: 1px; }
+  .trend-main { font-family: var(--mono); font-weight: 600; }
+  .trend-sub { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+
+  /* SECTION HEADER */
+  .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .section-title { font-size: 14px; font-weight: 600; }
+  .section-subtitle { font-size: 11px; color: var(--text3); margin-top: 2px; }
+
+  /* TREND VIEW */
+  .trend-tabs { display: flex; gap: 4px; }
+  .trend-tab { padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 500; color: var(--text3); background: var(--surface2); border: 1px solid var(--border); transition: all 0.15s; }
+  .trend-tab.active { color: var(--accent2); border-color: var(--accent); background: rgba(108,99,255,0.1); }
+
+  /* EXPAND ROW */
+  .expand-row td { padding: 0 !important; border-bottom: 1px solid var(--border); }
+  .expand-content { padding: 14px 16px 14px 40px; background: rgba(0,0,0,0.3); }
+  .expand-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .expand-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px; }
+  .expand-card-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .expand-card-value { font-size: 14px; font-weight: 600; font-family: var(--mono); }
+  .expand-title { font-size: 11px; font-weight: 600; color: var(--text2); margin-bottom: 8px; }
+  .cohort-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  .cohort-table th { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+  .cohort-table td { font-size: 11px; font-family: var(--mono); padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.03); }
+  .cohort-table tr:last-child td { border-bottom: none; }
+
+  .expand-toggle { color: var(--text3); font-size: 14px; transition: transform 0.2s; display: inline-block; }
+  .expand-toggle.open { transform: rotate(90deg); }
+
+  /* FILTER BAR */
+  .filter-bar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  .filter-select { background: var(--surface); border: 1px solid var(--border); color: var(--text2); font-size: 11px; padding: 5px 10px; border-radius: 6px; }
+
+  /* EMPTY */
+  .empty { text-align: center; padding: 40px; color: var(--text3); font-size: 12px; }
+
+  /* SCROLLBAR */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 10px; }
+
+  /* FILE UPLOAD */
+  .upload-zone { border: 2px dashed var(--border2); border-radius: 10px; padding: 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: var(--surface); margin-bottom: 16px; }
+  .upload-zone:hover { border-color: var(--accent); background: rgba(108,99,255,0.05); }
+  .upload-zone input { display: none; }
+  .upload-text { font-size: 12px; color: var(--text2); }
+  .upload-subtext { font-size: 11px; color: var(--text3); margin-top: 4px; }
+
+  .no-data { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 60px; color: var(--text3); }
+  .no-data-icon { font-size: 32px; }
+  .no-data-text { font-size: 13px; }
+  .no-data-sub { font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo">PW <span>Talk</span></div>
+    <div class="badge">PERFORMANCE</div>
+  </div>
+  <div class="topbar-right">
+    <span class="last-updated" id="lastUpdated">No data loaded</span>
+    <label class="upload-zone" style="margin:0;padding:6px 14px;border-style:solid;border-radius:6px;cursor:pointer;">
+      <span class="upload-text">📂 Upload CSV</span>
+      <input type="file" accept=".csv" id="csvUpload">
+    </label>
+  </div>
+</div>
+
+<div class="main">
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <div class="sidebar-section">
+    <div class="sidebar-label">Views</div>
+    <div class="nav-item active" onclick="setView('overview')" id="nav-overview"><span class="icon">⚡</span> Overview</div>
+    <div class="nav-item" onclick="setView('campaign')" id="nav-campaign"><span class="icon">📁</span> Campaign</div>
+    <div class="nav-item" onclick="setView('adset')" id="nav-adset"><span class="icon">🗂</span> Ad Set</div>
+    <div class="nav-item" onclick="setView('ad')" id="nav-ad"><span class="icon">🎬</span> Ad Level</div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Trends</div>
+    <div class="nav-item" onclick="setView('trends')" id="nav-trends"><span class="icon">📈</span> DoD / WoW / MoM</div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Filters</div>
+    <div id="sidebar-campaigns" style="padding:0 4px;"></div>
+  </div>
+</div>
+
+<!-- CONTENT -->
+<div class="content">
+
+  <!-- DATE BAR -->
+  <div class="date-bar">
+    <label>From</label>
+    <input type="date" class="date-input" id="dateFrom">
+    <label>To</label>
+    <input type="date" class="date-input" id="dateTo">
+    <button class="btn" onclick="applyDateFilter()">Apply</button>
+    <button class="btn" onclick="setPreset(7)" id="preset7">Last 7D</button>
+    <button class="btn" onclick="setPreset(14)" id="preset14">Last 14D</button>
+    <button class="btn" onclick="setPreset(30)" id="preset30">Last 30D</button>
+    <button class="btn" onclick="setPreset(0)" id="presetAll">All</button>
+  </div>
+
+  <!-- ALERTS -->
+  <div class="alerts-panel" id="alertsPanel" style="display:none;">
+    <div class="alerts-header">
+      <div class="alerts-title">⚠️ Action Required <span class="alert-count" id="alertCount">0</span></div>
+      <button class="btn" onclick="document.getElementById('alertsPanel').style.display='none'">Dismiss</button>
+    </div>
+    <div class="alerts-list" id="alertsList"></div>
+  </div>
+
+  <!-- VIEWS -->
+  <div id="view-overview"></div>
+  <div id="view-campaign" style="display:none;"></div>
+  <div id="view-adset" style="display:none;"></div>
+  <div id="view-ad" style="display:none;"></div>
+  <div id="view-trends" style="display:none;"></div>
+
+</div>
+</div>
+</div>
+
+<script>
+// ============================================================
+// META MAPPING (pulled from Meta Ads MCP)
+// ============================================================
+const META_MAP = {
+  ads: {
+    "120248614448260732": { name: "AI_AngryPhone_LEM-270_PWT_YOG-Video-Open-AAA-09-June-2026", adset_id: "120248610076540732", campaign_id: "120248610076530732" },
+    "120248957306880732": { name: "kidslearning_aarohi_testimonial_fancysynonyms-Hook2-232_PWT_FLA-C4-Video-Open-09-June-2026", adset_id: "120248957033310732", campaign_id: "120248957033330732" },
+    "120248957529150732": { name: "ReadIt-ScrollingTexts-Slow-276_PWT_YOG-Video-Open-Manual-09-June-2026", adset_id: "120248957506800732", campaign_id: "120248957033330732" },
+    "120248614376770732": { name: "ReadIt-ScrollingTexts-Slow-276_PWT_YOG-Video-Open-AAA-09-June-2026", adset_id: "120248610076540732", campaign_id: "120248610076530732" },
+    "120248958232050732": { name: "ReadingText_White+Popup-295_PWT_YOG-Video-Manual-Open-09-Jun-2026", adset_id: "120248958232060732", campaign_id: "120248957033330732" },
+    "120248957567460732": { name: "SceneDescribe-FallingOffRope-289_PWT_YOG-Manual-Open-09-June-2026", adset_id: "120248957567410732", campaign_id: "120248957033330732" },
+    "120248612560260732": { name: "kidslearning_aarohi_testimonial_fancysynonyms-Hook2-232_PWT_FLA-C4-Video-Open-09-June-2026", adset_id: "120248610076540732", campaign_id: "120248610076530732" },
+    "120248614081690732": { name: "Flamel_generallearning_kaveri_ugc_3stepstolearn-hook3-228_PWT_FLA-C4-Video-Open-AAA-09-June-2026", adset_id: "120248610076540732", campaign_id: "120248610076530732" },
+    "120248957567450732": { name: "GamifiedReading-294_PWT_YOG-Video-Open-09-Jun-2026", adset_id: "120248957567440732", campaign_id: "120248957033330732" },
+    "120248613721060732": { name: "PWTalk_aixarjun_holographicteacher_kissebaatkarun-hook1-213_PWT_FLA-C3-Video-Open-AAA-09-June-2026", adset_id: "120248610076540732", campaign_id: "120248610076530732" },
+    "120248957567420732": { name: "laavanya_Remake_YOG_Open_9th-June-2026", adset_id: "120248957567430732", campaign_id: "120248957033330732" },
+  },
+  adsets: {
+    "120248610076540732": { name: "PWT-India-AAA-Non-AP-Sir-Creatives-09-Jun-2026", campaign_id: "120248610076530732" },
+    "120248957033310732": { name: "kidslearning_aarohi_testimonial_fancysynonyms-232_PWT_FLA-C4-Video-Open-09-June-2026", campaign_id: "120248957033330732" },
+    "120248957506800732": { name: "ReadIt-ScrollingTexts-Slow-276_PWT_YOG-Video-Open-Manual-09-June-2026", campaign_id: "120248957033330732" },
+    "120248958232060732": { name: "ReadingText_White+Popup-295_PWT_YOG-Video-Manual-Open-09-Jun-2026", campaign_id: "120248957033330732" },
+    "120248957567410732": { name: "SceneDescribe-FallingOffRope-289_PWT_YOG-Manual-Open-09-June-2026", campaign_id: "120248957033330732" },
+    "120248957567440732": { name: "GamifiedReading-294_PWT_YOG-Video-Open-09-Jun-2026", campaign_id: "120248957033330732" },
+    "120248957567430732": { name: "laavanya_Remake_YOG_Open_9th-June-2026", campaign_id: "120248957033330732" },
+  },
+  campaigns: {
+    "120248610076530732": { name: "PWM30-VR-PWT-India-AAA-Non-AP-Sir-Creatives-09-Jun-2026" },
+    "120248957033330732": { name: "PWTalk-AppPromoManual-Open-9th-June-2026" },
+    "120245324998600732": { name: "PWM35-VR-PWT-India-Sales-Webinar-DryRun-16-Apr-2026" },
+    "120243512637450732": { name: "PWM35-VR-PWT-India-Meta-App-AA-CPT-NCA-Online-NA-Creative_Testing-09-March-2026" },
+    "120234201142350732": { name: "PWTalk-AppPromoManual_Ev-Purchase_Dev-Android_Loc-Open_Aud-MIXTargeting_Com-Mix_Maino_Acc2_Dt-050925" },
+  }
+};
+
+// EST MULTIPLIERS
+const EST_MULT = { d0: 1.0, d7: 1.105, d14: 1.14, d28: 1.17 };
+// AUTOPAY DELAY DAYS
+const AUTOPAY_DELAY = 8;
+// CPT THRESHOLDS
+const THRESH = {
+  cpt: { green: 100, amber: 150 },
+  cac: { green: 450, amber: 500 },
+  ctr: { green: 0.0025, amber: 0.0015 },
+  cpm: { green: 20, amber: 30 },
+  c2i: { green: 30, amber: 20 },
+  i2s: { green: 70, amber: 50 },
+  s2t: { green: 20, amber: 10 },
+  apr: { green: 28, amber: 20 },
+};
+
+// STATE
+let rawRows = [];
+let filteredRows = [];
+let currentView = 'overview';
+let dateFrom = null, dateTo = null;
+let activeCohort = 'default'; // default = current+d28est visible
+let expandedRows = new Set();
+let sortCol = null, sortDir = 1;
+let filterCampaign = 'all', filterAdset = 'all';
+
+// ============================================================
+// CSV PARSE
+// ============================================================
+document.getElementById('csvUpload').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    parseCSV(ev.target.result);
+    document.getElementById('lastUpdated').textContent = 'Updated: ' + new Date().toLocaleString('en-IN', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+    e.target.value = '';
+  };
+  reader.readAsText(file);
+});
+
+function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim());
+  rawRows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const vals = lines[i].split(',');
+    if (vals.length < 5) continue;
+    const get = (h) => { const idx = headers.indexOf(h); return idx >= 0 ? vals[idx]?.trim() : ''; };
+    const num = (h) => { const v = parseFloat(get(h)); return isNaN(v) ? 0 : v; };
+    const ad_id = get('Ad ID');
+    const adMeta = META_MAP.ads[ad_id] || {};
+    const adset_id = adMeta.adset_id || '';
+    const campaign_id = adMeta.campaign_id || '';
+    rawRows.push({
+      ad_id,
+      date: get('Date'),
+      impressions: num('Impressions'),
+      clicks: num('Clicks'),
+      installs: num('Installs appsflyer'),
+      cost: num('Cost'),
+      signups: num('Unique users ltv days cumulative appsflyer signed_up'),
+      trials: num('Unique users ltv days cumulative appsflyer trial_started'),
+      autopays: num('Unique users ltv days cumulative appsflyer sub_amt_deducted'),
+      d0_trials: num('Unique users 0 days cumulative appsflyer trial_started'),
+      d7_trials: num('Unique users 6 days cumulative appsflyer trial_started'),
+      d14_trials: num('Unique users 13 days cumulative appsflyer trial_started'),
+      d28_trials: num('Unique users 27 days cumulative appsflyer trial_started'),
+      ad_name: adMeta.name || ad_id,
+      adset_id,
+      adset_name: META_MAP.adsets[adset_id]?.name || adset_id,
+      campaign_id,
+      campaign_name: META_MAP.campaigns[campaign_id]?.name || campaign_id,
+    });
+  }
+  // Set date range defaults
+  const dates = rawRows.map(r => r.date).filter(Boolean).sort();
+  if (dates.length) {
+    document.getElementById('dateFrom').value = dates[0];
+    document.getElementById('dateTo').value = dates[dates.length - 1];
+  }
+  applyDateFilter();
+  buildSidebarFilters();
+}
+
+function applyDateFilter() {
+  const from = document.getElementById('dateFrom').value;
+  const to = document.getElementById('dateTo').value;
+  dateFrom = from; dateTo = to;
+  filteredRows = rawRows.filter(r => {
+    if (from && r.date < from) return false;
+    if (to && r.date > to) return false;
+    if (filterCampaign !== 'all' && r.campaign_id !== filterCampaign) return false;
+    if (filterAdset !== 'all' && r.adset_id !== filterAdset) return false;
+    return true;
+  });
+  render();
+}
+
+function setPreset(days) {
+  ['7','14','30','All'].forEach(p => document.getElementById('preset'+p)?.classList.remove('active-preset'));
+  const allDates = rawRows.map(r => r.date).filter(Boolean).sort();
+  if (!allDates.length) return;
+  const lastDate = allDates[allDates.length-1];
+  if (days === 0) {
+    document.getElementById('dateFrom').value = allDates[0];
+    document.getElementById('dateTo').value = lastDate;
+    document.getElementById('presetAll').classList.add('active-preset');
+  } else {
+    const d = new Date(lastDate);
+    d.setDate(d.getDate() - days + 1);
+    document.getElementById('dateFrom').value = d.toISOString().split('T')[0];
+    document.getElementById('dateTo').value = lastDate;
+    document.getElementById('preset'+days).classList.add('active-preset');
+  }
+  applyDateFilter();
+}
+
+function buildSidebarFilters() {
+  const campaigns = [...new Set(rawRows.map(r => r.campaign_id).filter(Boolean))];
+  const el = document.getElementById('sidebar-campaigns');
+  el.innerHTML = '<div class="sidebar-label">Campaigns</div>';
+  const all = document.createElement('div');
+  all.className = 'nav-item active';
+  all.innerHTML = '<span class="icon">🌐</span> All';
+  all.onclick = () => { filterCampaign = 'all'; filterAdset = 'all'; applyDateFilter(); };
+  el.appendChild(all);
+  campaigns.forEach(cid => {
+    const name = META_MAP.campaigns[cid]?.name || cid;
+    const short = name.split('-').slice(0,3).join('-');
+    const div = document.createElement('div');
+    div.className = 'nav-item';
+    div.title = name;
+    div.innerHTML = `<span class="icon">📁</span> <span style="overflow:hidden;text-overflow:ellipsis;max-width:130px;">${short}</span>`;
+    div.onclick = () => { filterCampaign = cid; filterAdset = 'all'; applyDateFilter(); };
+    el.appendChild(div);
+  });
+}
+
+// ============================================================
+// AGGREGATION
+// ============================================================
+function aggregate(rows) {
+  const s = { impressions:0, clicks:0, installs:0, cost:0, signups:0, trials:0, autopays:0, d0_trials:0, d7_trials:0, d14_trials:0, d28_trials:0 };
+  rows.forEach(r => {
+    s.impressions += r.impressions;
+    s.clicks += r.clicks;
+    s.installs += r.installs;
+    s.cost += r.cost;
+    s.signups += r.signups;
+    s.trials += r.trials;
+    s.autopays += r.autopays;
+    s.d0_trials += r.d0_trials;
+    s.d7_trials += r.d7_trials;
+    s.d14_trials += r.d14_trials;
+    s.d28_trials += r.d28_trials;
+  });
+  return calcMetrics(s, rows);
+}
+
+function calcMetrics(s, rows) {
+  const m = {...s};
+  m.cpm = s.impressions > 0 ? (s.cost / s.impressions * 1000) : 0;
+  m.cpc = s.clicks > 0 ? (s.cost / s.clicks) : 0;
+  m.ctr = s.impressions > 0 ? (s.clicks / s.impressions) : 0;
+  m.c2i = s.clicks > 0 ? (s.installs / s.clicks * 100) : 0;
+  m.i2s = s.installs > 0 ? (s.signups / s.installs * 100) : 0;
+  m.s2t = s.signups > 0 ? (s.trials / s.signups * 100) : 0;
+  m.apr = s.trials > 0 ? (s.autopays / s.trials * 100) : 0;
+  // CPT cohorts - CURRENT
+  m.cpt_current = s.trials > 0 ? s.cost / s.trials : 0;
+  m.cpt_d0 = s.d0_trials > 0 ? s.cost / s.d0_trials : 0;
+  m.cpt_d7 = s.d7_trials > 0 ? s.cost / s.d7_trials : 0;
+  m.cpt_d14 = s.d14_trials > 0 ? s.cost / s.d14_trials : 0;
+  m.cpt_d28 = s.d28_trials > 0 ? s.cost / s.d28_trials : 0;
+  // CPT cohorts - ESTIMATED (based on D0)
+  m.est_cpt_d0 = s.d0_trials > 0 ? s.cost / s.d0_trials : 0;
+  m.est_cpt_d7 = s.d0_trials > 0 ? s.cost / (s.d0_trials * EST_MULT.d7) : 0;
+  m.est_cpt_d14 = s.d0_trials > 0 ? s.cost / (s.d0_trials * EST_MULT.d14) : 0;
+  m.est_cpt_d28 = s.d0_trials > 0 ? s.cost / (s.d0_trials * EST_MULT.d28) : 0;
+  // CAC
+  m.cac_current = s.autopays > 0 ? s.cost / s.autopays : null;
+  const apr_rate = s.trials > 0 ? s.autopays / s.trials : 0;
+  m.est_cac_d0 = apr_rate > 0 && m.est_cpt_d0 > 0 ? m.est_cpt_d0 / apr_rate : null;
+  m.est_cac_d7 = apr_rate > 0 && m.est_cpt_d7 > 0 ? m.est_cpt_d7 / apr_rate : null;
+  m.est_cac_d14 = apr_rate > 0 && m.est_cpt_d14 > 0 ? m.est_cpt_d14 / apr_rate : null;
+  m.est_cac_d28 = apr_rate > 0 && m.est_cpt_d28 > 0 ? m.est_cpt_d28 / apr_rate : null;
+  // Days since earliest date in rows
+  if (rows && rows.length) {
+    const dates = rows.map(r => r.date).filter(Boolean).sort();
+    const earliest = dates[0];
+    const today = new Date().toISOString().split('T')[0];
+    m.days_old = earliest ? Math.floor((new Date(today) - new Date(earliest)) / 86400000) : 999;
+  } else { m.days_old = 999; }
+  return m;
+}
+
+function isEarlyForAutopay(m) { return m.days_old < AUTOPAY_DELAY; }
+
+// ============================================================
+// TREND CALCULATIONS
+// ============================================================
+function getDateGroups(rows, key_fn) {
+  const groups = {};
+  rows.forEach(r => {
+    const key = key_fn(r);
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(r);
+  });
+  return groups;
+}
+
+function getTrends(adId) {
+  const adRows = rawRows.filter(r => r.ad_id === adId).sort((a,b) => a.date < b.date ? -1 : 1);
+  if (adRows.length < 2) return null;
+  const byDate = {};
+  adRows.forEach(r => { byDate[r.date] = r; });
+  const dates = Object.keys(byDate).sort();
+  const last = dates[dates.length - 1];
+  const prev = dates[dates.length - 2];
+  if (!prev) return null;
+  const curr = calcMetrics(byDate[last], [byDate[last]]);
+  const prv = calcMetrics(byDate[prev], [byDate[prev]]);
+  return { dod: { curr, prv } };
+}
+
+function pctChange(curr, prev) {
+  if (!prev || prev === 0) return null;
+  return ((curr - prev) / prev * 100).toFixed(1);
+}
+
+// ============================================================
+// FLAG LOGIC
+// ============================================================
+function getFlags(m, label) {
+  const flags = [];
+  if (m.ctr * 100 < THRESH.ctr.amber * 100) flags.push({ type: m.ctr < THRESH.ctr.amber ? 'red' : 'amber', msg: `${label}: CTR ${(m.ctr*100).toFixed(2)}% — hook failing` });
+  if (m.cpm > THRESH.cpm.amber) flags.push({ type: m.cpm > THRESH.cpm.amber ? 'red' : 'amber', msg: `${label}: CPM ₹${m.cpm.toFixed(0)} high` });
+  if (m.cpt_current > 0 && m.cpt_current > THRESH.cpt.amber) flags.push({ type: m.cpt_current > THRESH.cpt.amber ? 'red' : 'amber', msg: `${label}: CPT ₹${m.cpt_current.toFixed(0)} above threshold` });
+  if (m.c2i < THRESH.c2i.amber) flags.push({ type: 'amber', msg: `${label}: Click→Install ${m.c2i.toFixed(1)}% low` });
+  if (m.cost > 0 && m.installs === 0) flags.push({ type: 'red', msg: `${label}: Spend with 0 installs` });
+  if (m.cost > 0 && m.trials === 0 && m.days_old > 2) flags.push({ type: 'amber', msg: `${label}: No trials yet (${m.days_old}d old)` });
+  return flags;
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+function setView(v) {
+  currentView = v;
+  ['overview','campaign','adset','ad','trends'].forEach(id => {
+    document.getElementById('view-'+id).style.display = id === v ? 'block' : 'none';
+    document.getElementById('nav-'+id)?.classList.toggle('active', id === v);
+  });
+  render();
+}
+
+function render() {
+  if (filteredRows.length === 0) {
+    renderEmpty();
+    return;
+  }
+  generateAlerts();
+  if (currentView === 'overview') renderOverview();
+  else if (currentView === 'campaign') renderCampaignView();
+  else if (currentView === 'adset') renderAdsetView();
+  else if (currentView === 'ad') renderAdView();
+  else if (currentView === 'trends') renderTrendsView();
+}
+
+function renderEmpty() {
+  const el = document.getElementById('view-' + currentView);
+  el.innerHTML = `<div class="no-data"><div class="no-data-icon">📊</div><div class="no-data-text">No data loaded</div><div class="no-data-sub">Upload your AppsFlyer CSV using the button in the top right</div></div>`;
+}
+
+// ============================================================
+// ALERTS
+// ============================================================
+function generateAlerts() {
+  // Group by ad_id, aggregate
+  const byAd = groupBy(filteredRows, 'ad_id');
+  const allFlags = [];
+  Object.entries(byAd).forEach(([ad_id, rows]) => {
+    const m = aggregate(rows);
+    const label = truncate(META_MAP.ads[ad_id]?.name || ad_id, 30);
+    allFlags.push(...getFlags(m, label));
+  });
+  const panel = document.getElementById('alertsPanel');
+  const list = document.getElementById('alertsList');
+  const count = document.getElementById('alertCount');
+  if (allFlags.length === 0) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  count.textContent = allFlags.length;
+  list.innerHTML = allFlags.map(f => `<div class="alert-chip ${f.type}">⚑ ${f.msg}</div>`).join('');
+}
+
+// ============================================================
+// OVERVIEW
+// ============================================================
+function renderOverview() {
+  const el = document.getElementById('view-overview');
+  const m = aggregate(filteredRows);
+  const early = isEarlyForAutopay(m);
+  el.innerHTML = `
+    <div class="section-header"><div><div class="section-title">Account Overview</div><div class="section-subtitle">${filteredRows.length} rows · ${[...new Set(filteredRows.map(r=>r.ad_id))].length} ads · ₹${m.cost.toFixed(0)} total spend</div></div></div>
+    <div class="summary-grid">
+      ${card('Total Spend', '₹'+fmt(m.cost), '', '')}
+      ${card('Impressions', fmtN(m.impressions), '', '')}
+      ${card('Clicks', fmtN(m.clicks), '', '')}
+      ${card('CTR', (m.ctr*100).toFixed(2)+'%', colorClass(m.ctr*100, THRESH.ctr.green*100, THRESH.ctr.amber*100, true), '')}
+      ${card('CPM', '₹'+m.cpm.toFixed(1), colorClass(m.cpm, THRESH.cpm.green, THRESH.cpm.amber, false), '')}
+      ${card('CPC', '₹'+m.cpc.toFixed(1), '', '')}
+      ${card('Installs', fmtN(m.installs), '', '')}
+      ${card('Click→Install', m.c2i.toFixed(1)+'%', colorClass(m.c2i, THRESH.c2i.green, THRESH.c2i.amber, true), '')}
+      ${card('Signups', fmtN(m.signups), '', '')}
+      ${card('Install→Signup', m.i2s.toFixed(1)+'%', colorClass(m.i2s, THRESH.i2s.green, THRESH.i2s.amber, true), '')}
+      ${card('Trials (D28)', fmtN(m.trials), '', '')}
+      ${card('Signup→Trial', m.s2t.toFixed(1)+'%', colorClass(m.s2t, THRESH.s2t.green, THRESH.s2t.amber, true), '')}
+      ${card('CPT (Current)', m.cpt_current>0?'₹'+m.cpt_current.toFixed(0):'—', m.cpt_current>0?colorClass(m.cpt_current, THRESH.cpt.green, THRESH.cpt.amber, false):'', '')}
+      ${card('Est CPT D28', m.est_cpt_d28>0?'₹'+m.est_cpt_d28.toFixed(0):'—', m.est_cpt_d28>0?colorClass(m.est_cpt_d28, THRESH.cpt.green, THRESH.cpt.amber, false):'', '')}
+      ${card('Autopays', early?'—':fmtN(m.autopays), '', early?'Early':'') }
+      ${card('Autopay Rate', early?'—':m.apr.toFixed(1)+'%', early?'':colorClass(m.apr, THRESH.apr.green, THRESH.apr.amber, true), early?'Early':'')}
+      ${card('CAC (Current)', early?'—':m.cac_current?'₹'+m.cac_current.toFixed(0):'—', early?'':m.cac_current?colorClass(m.cac_current, THRESH.cac.green, THRESH.cac.amber, false):'', early?'Early':'')}
+      ${card('Est CAC D28', early?'—':m.est_cac_d28?'₹'+m.est_cac_d28.toFixed(0):'—', early?'':m.est_cac_d28?colorClass(m.est_cac_d28, THRESH.cac.green, THRESH.cac.amber, false):'', early?'Early':'')}
+    </div>
+  `;
+}
+
+function card(label, value, cls, note) {
+  return `<div class="summary-card"><div class="card-label">${label}</div><div class="card-value ${cls||''}">${value}</div>${note?`<div class="card-trend" style="color:var(--text3);font-size:10px;">${note}</div>`:''}</div>`;
+}
+
+// ============================================================
+// CAMPAIGN VIEW
+// ============================================================
+function renderCampaignView() {
+  const el = document.getElementById('view-campaign');
+  const byCampaign = groupBy(filteredRows, 'campaign_id');
+  const rows = Object.entries(byCampaign).map(([cid, rows]) => {
+    const m = aggregate(rows);
+    return { id: cid, name: META_MAP.campaigns[cid]?.name || cid, m, rows };
+  });
+  el.innerHTML = buildTable('campaign', rows, 'Campaign', r => r.name, r => r.id);
+}
+
+// ============================================================
+// ADSET VIEW
+// ============================================================
+function renderAdsetView() {
+  const el = document.getElementById('view-adset');
+  const byAdset = groupBy(filteredRows, 'adset_id');
+  const rows = Object.entries(byAdset).map(([aid, rows]) => {
+    const m = aggregate(rows);
+    const campaign_id = rows[0].campaign_id;
+    return { id: aid, name: META_MAP.adsets[aid]?.name || aid, campaign: META_MAP.campaigns[campaign_id]?.name || campaign_id, m, rows };
+  });
+  el.innerHTML = buildTable('adset', rows, 'Ad Set', r => r.name, r => r.id, r => r.campaign);
+}
+
+// ============================================================
+// AD VIEW
+// ============================================================
+function renderAdView() {
+  const el = document.getElementById('view-ad');
+  const byAd = groupBy(filteredRows, 'ad_id');
+  const rows = Object.entries(byAd).map(([aid, rows]) => {
+    const m = aggregate(rows);
+    const adset_id = rows[0].adset_id;
+    const campaign_id = rows[0].campaign_id;
+    return { id: aid, name: META_MAP.ads[aid]?.name || aid, adset: META_MAP.adsets[adset_id]?.name || adset_id, campaign: META_MAP.campaigns[campaign_id]?.name || campaign_id, m, rows };
+  });
+  el.innerHTML = buildTable('ad', rows, 'Ad', r => r.name, r => r.id, null, r => r.adset);
+}
+
+// ============================================================
+// UNIFIED TABLE BUILDER
+// ============================================================
+function buildTable(type, rows, entityLabel, nameFn, idFn, col2Fn, col3Fn) {
+  const early = rows.length > 0 ? isEarlyForAutopay(rows[0].m) : true;
+  let html = `<div class="table-wrap">
+    <div class="table-toolbar">
+      <div class="table-title">${entityLabel} Performance</div>
+      <div class="table-controls">
+        <input class="search-input" placeholder="Search ${entityLabel}..." oninput="filterTable(this.value, '${type}')">
+        <div class="cohort-toggle">
+          <span class="cohort-label">CPT/CAC Cohorts:</span>
+          <button class="cohort-btn ${activeCohort==='default'?'active':''}" onclick="setCohort('default')">Default</button>
+          <button class="cohort-btn ${activeCohort==='all'?'active':''}" onclick="setCohort('all')">Expand All</button>
+        </div>
+      </div>
+    </div>
+    <div style="overflow-x:auto;">
+    <table id="tbl-${type}">
+    <thead><tr>
+      <th style="width:24px;"></th>
+      <th onclick="sortTable('${type}','name')">${entityLabel} <span class="sort-icon">↕</span></th>
+      ${col2Fn ? `<th>Campaign</th>` : ''}
+      ${col3Fn ? `<th>Ad Set</th>` : ''}
+      <th onclick="sortTable('${type}','cost')">Spend ₹ <span class="sort-icon">↕</span></th>
+      <th onclick="sortTable('${type}','impressions')">Impr <span class="sort-icon">↕</span></th>
+      <th onclick="sortTable('${type}','ctr')">CTR <span class="sort-icon">↕</span></th>
+      <th onclick="sortTable('${type}','cpm')">CPM <span class="sort-icon">↕</span></th>
+      <th onclick="sortTable('${type}','cpc')">CPC <span class="sort-icon">↕</span></th>
+      <th onclick="sortTable('${type}','installs')">Installs <span class="sort-icon">↕</span></th>
+      <th onclick="sortTable('${type}','c2i')">C→I% <span class="sort-icon">↕</span></th>
+      <th onclick="sortTable('${type}','signups')">Signups <span class="sort-icon">↕</span></th>
+      <th onclick="sortTable('${type}','i2s')">I→S% <span class="sort-icon">↕</span></th>
+      <th onclick="sortTable('${type}','trials')">Trials <span class="sort-icon">↕</span></th>
+      <th onclick="sortTable('${type}','s2t')">S→T% <span class="sort-icon">↕</span></th>
+      <th onclick="sortTable('${type}','cpt_current')">CPT <span class="sort-icon">↕</span></th>
+      <th onclick="sortTable('${type}','est_cpt_d28')">Est CPT D28 <span class="sort-icon">↕</span></th>
+      <th>Autopays</th>
+      <th>APR%</th>
+      <th onclick="sortTable('${type}','cac_current')">CAC <span class="sort-icon">↕</span></th>
+      <th>Est CAC D28</th>
+      <th>Flags</th>
+    </tr></thead>
+    <tbody id="tbody-${type}">`;
+
+  rows.forEach(row => {
+    const m = row.m;
+    const id = idFn(row);
+    const earlyRow = isEarlyForAutopay(m);
+    const flags = getFlags(m, '');
+    const flagHtml = flags.map(f => `<span class="pill ${f.type}" title="${f.msg}">${f.type==='red'?'🔴':'🟡'}</span>`).join(' ');
+    html += `<tr class="expandable-parent" onclick="toggleExpand('${type}','${id}')">
+      <td><span class="expand-toggle" id="exp-${id}">▶</span></td>
+      <td class="name-cell" title="${nameFn(row)}">${truncate(nameFn(row), 38)}</td>
+      ${col2Fn ? `<td class="name-cell" title="${col2Fn(row)}">${truncate(col2Fn(row)||'—',28)}</td>` : ''}
+      ${col3Fn ? `<td class="name-cell" title="${col3Fn(row)}">${truncate(col3Fn(row)||'—',28)}</td>` : ''}
+      <td><span class="trend-cell"><span class="trend-main">₹${fmt(m.cost)}</span></span></td>
+      <td>${fmtN(m.impressions)}</td>
+      <td><span class="pill ${colorClass(m.ctr*100, THRESH.ctr.green*100, THRESH.ctr.amber*100, true)}">${(m.ctr*100).toFixed(2)}%</span></td>
+      <td><span class="pill ${colorClass(m.cpm, THRESH.cpm.green, THRESH.cpm.amber, false)}">₹${m.cpm.toFixed(1)}</span></td>
+      <td>₹${m.cpc.toFixed(1)}</td>
+      <td>${fmtN(m.installs)}</td>
+      <td><span class="pill ${colorClass(m.c2i, THRESH.c2i.green, THRESH.c2i.amber, true)}">${m.c2i.toFixed(1)}%</span></td>
+      <td>${fmtN(m.signups)}</td>
+      <td><span class="pill ${colorClass(m.i2s, THRESH.i2s.green, THRESH.i2s.amber, true)}">${m.i2s.toFixed(1)}%</span></td>
+      <td>${fmtN(m.trials)}</td>
+      <td><span class="pill ${colorClass(m.s2t, THRESH.s2t.green, THRESH.s2t.amber, true)}">${m.s2t.toFixed(1)}%</span></td>
+      <td><span class="pill ${m.cpt_current>0?colorClass(m.cpt_current, THRESH.cpt.green, THRESH.cpt.amber, false):'neutral'}">${m.cpt_current>0?'₹'+m.cpt_current.toFixed(0):'—'}</span></td>
+      <td><span class="pill ${m.est_cpt_d28>0?colorClass(m.est_cpt_d28, THRESH.cpt.green, THRESH.cpt.amber, false):'neutral'}">${m.est_cpt_d28>0?'₹'+m.est_cpt_d28.toFixed(0):'—'}</span></td>
+      <td>${earlyRow?'<span class="pill early">—</span>':fmtN(m.autopays)}</td>
+      <td><span class="pill ${earlyRow?'early':colorClass(m.apr, THRESH.apr.green, THRESH.apr.amber, true)}">${earlyRow?'—':m.apr.toFixed(1)+'%'}</span></td>
+      <td><span class="pill ${earlyRow?'early':m.cac_current?colorClass(m.cac_current, THRESH.cac.green, THRESH.cac.amber, false):'neutral'}">${earlyRow?'—':m.cac_current?'₹'+m.cac_current.toFixed(0):'—'}</span></td>
+      <td><span class="pill ${earlyRow?'early':m.est_cac_d28?colorClass(m.est_cac_d28, THRESH.cac.green, THRESH.cac.amber, false):'neutral'}">${earlyRow?'—':m.est_cac_d28?'₹'+m.est_cac_d28.toFixed(0):'—'}</span></td>
+      <td>${flagHtml||'<span style="color:var(--text3);font-size:10px;">—</span>'}</td>
+    </tr>
+    <tr class="expand-row" id="expand-${id}" style="display:none;">
+      <td colspan="99">${buildExpandContent(m, earlyRow, row, type)}</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div></div>`;
+  return html;
+}
+
+function buildExpandContent(m, early, row, type) {
+  return `<div class="expand-content">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div>
+        <div class="expand-title">📊 CPT Cohorts</div>
+        <table class="cohort-table">
+          <thead><tr><th>Cohort</th><th>Trials</th><th>Current CPT</th><th>Est CPT</th></tr></thead>
+          <tbody>
+            <tr><td>D0</td><td>${m.d0_trials}</td><td>${m.cpt_d0>0?'<span class="pill '+colorClass(m.cpt_d0,THRESH.cpt.green,THRESH.cpt.amber,false)+'">₹'+m.cpt_d0.toFixed(0)+'</span>':'—'}</td><td>${m.est_cpt_d0>0?'<span class="pill '+colorClass(m.est_cpt_d0,THRESH.cpt.green,THRESH.cpt.amber,false)+'">₹'+m.est_cpt_d0.toFixed(0)+'</span>':'—'}</td></tr>
+            <tr><td>D7</td><td>${m.d7_trials}</td><td>${m.cpt_d7>0?'<span class="pill '+colorClass(m.cpt_d7,THRESH.cpt.green,THRESH.cpt.amber,false)+'">₹'+m.cpt_d7.toFixed(0)+'</span>':'—'}</td><td>${m.est_cpt_d7>0?'<span class="pill '+colorClass(m.est_cpt_d7,THRESH.cpt.green,THRESH.cpt.amber,false)+'">₹'+m.est_cpt_d7.toFixed(0)+'</span>':'—'}</td></tr>
+            <tr><td>D14</td><td>${m.d14_trials}</td><td>${m.cpt_d14>0?'<span class="pill '+colorClass(m.cpt_d14,THRESH.cpt.green,THRESH.cpt.amber,false)+'">₹'+m.cpt_d14.toFixed(0)+'</span>':'—'}</td><td>${m.est_cpt_d14>0?'<span class="pill '+colorClass(m.est_cpt_d14,THRESH.cpt.green,THRESH.cpt.amber,false)+'">₹'+m.est_cpt_d14.toFixed(0)+'</span>':'—'}</td></tr>
+            <tr><td>D28</td><td>${m.d28_trials}</td><td>${m.cpt_d28>0?'<span class="pill '+colorClass(m.cpt_d28,THRESH.cpt.green,THRESH.cpt.amber,false)+'">₹'+m.cpt_d28.toFixed(0)+'</span>':'—'}</td><td>${m.est_cpt_d28>0?'<span class="pill '+colorClass(m.est_cpt_d28,THRESH.cpt.green,THRESH.cpt.amber,false)+'">₹'+m.est_cpt_d28.toFixed(0)+'</span>':'—'}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <div class="expand-title">💰 CAC Cohorts ${early?'<span class="pill early" style="margin-left:6px;">Autopay data not yet available (&lt;8 days)</span>':''}</div>
+        <table class="cohort-table">
+          <thead><tr><th>Cohort</th><th>Est CAC</th></tr></thead>
+          <tbody>
+            <tr><td>Current</td><td>${early?'—':m.cac_current?'<span class="pill '+colorClass(m.cac_current,THRESH.cac.green,THRESH.cac.amber,false)+'">₹'+m.cac_current.toFixed(0)+'</span>':'—'}</td></tr>
+            <tr><td>Est D0</td><td>${early?'—':m.est_cac_d0?'<span class="pill '+colorClass(m.est_cac_d0,THRESH.cac.green,THRESH.cac.amber,false)+'">₹'+m.est_cac_d0.toFixed(0)+'</span>':'—'}</td></tr>
+            <tr><td>Est D7</td><td>${early?'—':m.est_cac_d7?'<span class="pill '+colorClass(m.est_cac_d7,THRESH.cac.green,THRESH.cac.amber,false)+'">₹'+m.est_cac_d7.toFixed(0)+'</span>':'—'}</td></tr>
+            <tr><td>Est D14</td><td>${early?'—':m.est_cac_d14?'<span class="pill '+colorClass(m.est_cac_d14,THRESH.cac.green,THRESH.cac.amber,false)+'">₹'+m.est_cac_d14.toFixed(0)+'</span>':'—'}</td></tr>
+            <tr><td>Est D28</td><td>${early?'—':m.est_cac_d28?'<span class="pill '+colorClass(m.est_cac_d28,THRESH.cac.green,THRESH.cac.amber,false)+'">₹'+m.est_cac_d28.toFixed(0)+'</span>':'—'}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ============================================================
+// TRENDS VIEW
+// ============================================================
+function renderTrendsView() {
+  const el = document.getElementById('view-trends');
+  const byDate = groupBy(filteredRows, 'date');
+  const dates = Object.keys(byDate).sort();
+  if (dates.length < 2) {
+    el.innerHTML = `<div class="empty">Need at least 2 days of data to show trends. Currently have ${dates.length} day(s).</div>`;
+    return;
+  }
+  const metrics = ['cost','installs','trials','cpt_current','est_cpt_d28','cac_current','ctr','cpm','c2i','i2s','s2t','apr'];
+  const labels = { cost:'Spend ₹', installs:'Installs', trials:'Trials', cpt_current:'CPT (Current)', est_cpt_d28:'Est CPT D28', cac_current:'CAC', ctr:'CTR%', cpm:'CPM', c2i:'Click→Install%', i2s:'Install→Signup%', s2t:'Signup→Trial%', apr:'Autopay Rate%' };
+  const daily = dates.map(d => ({ date: d, ...calcMetrics(aggregate(byDate[d]), byDate[d]) }));
+
+  // DoD
+  const dodRows = daily.slice(-7);
+  let dodHtml = `<div class="expand-title" style="margin-bottom:10px;">Day-on-Day (Last 7 days)</div><div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;">
+    <thead><tr><th style="padding:6px 10px;text-align:left;background:var(--surface2);border-bottom:1px solid var(--border);font-size:10px;color:var(--text3);">Metric</th>`;
+  dodRows.forEach(d => { dodHtml += `<th style="padding:6px 10px;text-align:right;background:var(--surface2);border-bottom:1px solid var(--border);font-size:10px;color:var(--text3);">${d.date}</th>`; });
+  dodHtml += `</tr></thead><tbody>`;
+  metrics.forEach(metric => {
+    dodHtml += `<tr style="border-bottom:1px solid var(--border);">`;
+    dodHtml += `<td style="padding:6px 10px;color:var(--text2);font-weight:500;">${labels[metric]}</td>`;
+    dodRows.forEach((d,i) => {
+      const val = d[metric];
+      const prev = i > 0 ? dodRows[i-1][metric] : null;
+      const chg = prev ? pctChange(val, prev) : null;
+      const isPercent = ['ctr','c2i','i2s','s2t','apr'].includes(metric);
+      const isCurrency = ['cost','cpt_current','est_cpt_d28','cac_current','cpm'].includes(metric);
+      let display = val === null || val === undefined ? '—' : (isCurrency ? '₹'+fmt(val) : (isPercent ? (val*(['ctr'].includes(metric)?100:1)).toFixed(1)+'%' : fmtN(val)));
+      if (metric === 'ctr') display = (val*100).toFixed(2)+'%';
+      let chgHtml = '';
+      if (chg !== null) {
+        const up = parseFloat(chg) > 0;
+        const isGoodUp = ['installs','trials','c2i','i2s','s2t','apr','ctr'].includes(metric);
+        const color = up ? (isGoodUp?'var(--green)':'var(--red)') : (isGoodUp?'var(--red)':'var(--green)');
+        chgHtml = `<div style="font-size:9px;color:${color};">${up?'↑':'↓'}${Math.abs(chg)}%</div>`;
+      }
+      dodHtml += `<td style="padding:6px 10px;text-align:right;font-family:var(--mono);">${display}${chgHtml}</td>`;
+    });
+    dodHtml += `</tr>`;
+  });
+  dodHtml += `</tbody></table></div>`;
+
+  // WoW - aggregate by week
+  const byWeek = {};
+  daily.forEach(d => {
+    const date = new Date(d.date);
+    const weekNum = getWeekNumber(date);
+    const wk = date.getFullYear() + '-W' + String(weekNum).padStart(2,'0');
+    if (!byWeek[wk]) byWeek[wk] = [];
+    byWeek[wk].push(d);
+  });
+  const weeks = Object.keys(byWeek).sort();
+  let wowHtml = `<div class="expand-title" style="margin-bottom:10px;">Week-on-Week</div>`;
+  if (weeks.length < 2) {
+    wowHtml += `<div class="empty" style="padding:20px;">Not enough data for WoW (need 2+ weeks)</div>`;
+  } else {
+    wowHtml += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr>
+      <th style="padding:6px 10px;text-align:left;background:var(--surface2);border-bottom:1px solid var(--border);font-size:10px;color:var(--text3);">Metric</th>`;
+    weeks.forEach(w => { wowHtml += `<th style="padding:6px 10px;text-align:right;background:var(--surface2);border-bottom:1px solid var(--border);font-size:10px;color:var(--text3);">${w}</th>`; });
+    wowHtml += `</tr></thead><tbody>`;
+    metrics.forEach(metric => {
+      wowHtml += `<tr style="border-bottom:1px solid var(--border);"><td style="padding:6px 10px;color:var(--text2);font-weight:500;">${labels[metric]}</td>`;
+      weeks.forEach((w,i) => {
+        const wRows = byWeek[w];
+        const agg = aggregate(wRows.flatMap(d => filteredRows.filter(r => r.date === d.date)));
+        const val = agg[metric];
+        const prevWeekRows = i > 0 ? byWeek[weeks[i-1]] : null;
+        let prevVal = null;
+        if (prevWeekRows) { const pa = aggregate(prevWeekRows.flatMap(d => filteredRows.filter(r => r.date === d.date))); prevVal = pa[metric]; }
+        const chg = prevVal !== null ? pctChange(val, prevVal) : null;
+        const isPercent = ['ctr','c2i','i2s','s2t','apr'].includes(metric);
+        const isCurrency = ['cost','cpt_current','est_cpt_d28','cac_current','cpm'].includes(metric);
+        let display = val === null ? '—' : (isCurrency ? '₹'+fmt(val) : (isPercent ? val.toFixed(1)+'%' : fmtN(val)));
+        if (metric === 'ctr') display = (val*100).toFixed(2)+'%';
+        let chgHtml = '';
+        if (chg !== null) {
+          const up = parseFloat(chg) > 0;
+          const isGoodUp = ['installs','trials','c2i','i2s','s2t','apr','ctr'].includes(metric);
+          const color = up ? (isGoodUp?'var(--green)':'var(--red)') : (isGoodUp?'var(--red)':'var(--green)');
+          chgHtml = `<div style="font-size:9px;color:${color};">${up?'↑':'↓'}${Math.abs(chg)}%</div>`;
+        }
+        wowHtml += `<td style="padding:6px 10px;text-align:right;font-family:var(--mono);">${display}${chgHtml}</td>`;
+      });
+      wowHtml += `</tr>`;
+    });
+    wowHtml += `</tbody></table></div>`;
+  }
+
+  el.innerHTML = `
+    <div class="section-header"><div class="section-title">Trend Analysis</div></div>
+    <div class="table-wrap" style="margin-bottom:16px;padding:16px;">${dodHtml}</div>
+    <div class="table-wrap" style="padding:16px;">${wowHtml}</div>
+  `;
+}
+
+// ============================================================
+// INTERACTIONS
+// ============================================================
+function toggleExpand(type, id) {
+  const row = document.getElementById('expand-'+id);
+  const toggle = document.getElementById('exp-'+id);
+  if (!row) return;
+  const isOpen = row.style.display !== 'none';
+  row.style.display = isOpen ? 'none' : 'table-row';
+  toggle.classList.toggle('open', !isOpen);
+}
+
+function setCohort(c) {
+  activeCohort = c;
+  render();
+}
+
+function filterTable(val, type) {
+  const tbody = document.getElementById('tbody-'+type);
+  if (!tbody) return;
+  const rows = tbody.querySelectorAll('tr.expandable-parent');
+  rows.forEach(row => {
+    const nameCell = row.querySelector('.name-cell');
+    const text = nameCell ? nameCell.textContent.toLowerCase() : '';
+    const show = !val || text.includes(val.toLowerCase());
+    row.style.display = show ? '' : 'none';
+    const expandRow = row.nextElementSibling;
+    if (expandRow?.classList.contains('expand-row')) expandRow.style.display = 'none';
+  });
+}
+
+function sortTable(type, col) {
+  if (sortCol === col) sortDir *= -1; else { sortCol = col; sortDir = 1; }
+  render();
+}
+
+// ============================================================
+// UTILS
+// ============================================================
+function groupBy(arr, key) {
+  return arr.reduce((acc, row) => {
+    const k = row[key] || 'unknown';
+    if (!acc[k]) acc[k] = [];
+    acc[k].push(row);
+    return acc;
+  }, {});
+}
+
+function colorClass(val, green, amber, higherIsBetter) {
+  if (higherIsBetter) {
+    if (val >= green) return 'green';
+    if (val >= amber) return 'amber';
+    return 'red';
+  } else {
+    if (val <= green) return 'green';
+    if (val <= amber) return 'amber';
+    return 'red';
+  }
+}
+
+function fmt(n) { if (!n || isNaN(n)) return '0'; return Number(n).toLocaleString('en-IN', {maximumFractionDigits:0}); }
+function fmtN(n) { if (!n || isNaN(n)) return '0'; if (n >= 100000) return (n/100000).toFixed(1)+'L'; if (n >= 1000) return (n/1000).toFixed(1)+'K'; return Math.round(n).toString(); }
+function truncate(str, n) { return str && str.length > n ? str.substring(0, n) + '…' : (str || '—'); }
+
+function getWeekNumber(d) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(),0,1));
+  return Math.ceil((((date - yearStart) / 86400000) + 1)/7);
+}
+
+// Init — show empty overview
+setView('overview');
+</script>
+</body>
+</html>
