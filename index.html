@@ -397,7 +397,7 @@ let MAP_AD={};
 Object.keys(META_AD).forEach(id=>{const m=META_AD[id];MAP_AD[id]={s:m.s,as:m.as,c:m.c,acct:'new'};});
 let ALL_ROWS=[];
 let view='campaign',gran='dod',numCols=7,anchor='2026-06-18',search='',fCamp='all',fAset='all',fAd='all',acct='new';
-let openEnts={},collapsedGroups={},treeOpen={},actOpen={};
+let openEnts={},collapsedGroups={},treeOpen={},actOpen={},actFilter='action';
 const $=s=>document.querySelector(s);const $$=s=>document.querySelectorAll(s);
 function adCamp(id){return MAP_AD[id]?.c||'';}
 function adAset(id){return MAP_AD[id]?.as||'';}
@@ -658,16 +658,10 @@ function trendFor(entKey,entId){
   function win(span,back){const e=new Date(a);if(span==='d'){e.setDate(e.getDate()-back);return[e.toISOString().split('T')[0],e.toISOString().split('T')[0]];}if(span==='w'){e.setDate(e.getDate()-back*7);const s=new Date(e);s.setDate(s.getDate()-6);return[s.toISOString().split('T')[0],e.toISOString().split('T')[0]];}const ee=new Date(e);ee.setMonth(ee.getMonth()-back);const s=new Date(ee);s.setDate(s.getDate()-29);return[s.toISOString().split('T')[0],ee.toISOString().split('T')[0]];}
   function chg(span){const[f0,t0]=win(span,0),[f1,t1]=win(span,1);const m0=ms(aggRangeFor(f0,t0,entKey,entId)),m1=ms(aggRangeFor(f1,t1,entKey,entId));const out={};['cpt','ctr','c2i','i2s','s2t'].forEach(k=>{out[k]=(m0[k]!==null&&m1[k]!==null&&m1[k]!==0)?((m0[k]-m1[k])/m1[k]*100):null;});out._cur=m0;return out;}
   return{dod:chg('d'),wow:chg('w'),mom:chg('m')};}
-// trailing-window aggregate (for maturity / revive assessment)
-function trailAgg(entKey,entId,days){return aggRangeFor(isoBack(days),anchor,entKey,entId);}
-// last-N-days cost (for paused detection)
-function recentCost(entKey,entId,days){return aggRangeFor(isoBack(days-1),anchor,entKey,entId).cost;}
-// lifetime aggregate across all loaded data for this entity
-function lifetimeAgg(entKey,entId){return aggRangeFor('2000-01-01',anchor,entKey,entId);}
 // ═══════════════════════════════════════════════════════════
 // ACTIONABLES — Hierarchical decision table (Campaign▸AdSet▸Ad)
 // Flag: green=Scale · red=Pause · moderate=Watch/needs data
-// AR/CAC only trusted when actual trials ≥ ACT.minTrialsForAR
+// AR/CAC only trusted when matured-cohort actual trials ≥ ACT.minTrialsForAR
 // ═══════════════════════════════════════════════════════════
 function trailAgg(entKey,entId,days){return aggRangeFor(isoBack(days),anchor,entKey,entId);}
 function recentCost(entKey,entId,days){return aggRangeFor(isoBack(days-1),anchor,entKey,entId).cost;}
@@ -680,58 +674,67 @@ function entMetrics(entKey,entId){
   const wk=weekAgg(entKey,entId);
   const recent7=recentCost(entKey,entId,ACT.pausedWindow);
   const isPaused=recent7===0;
-  // D28-estimated trials
-  const lifeT28=life.d0*EST.d28;          // lifetime est D28 trials
-  const wkT28=wk.d0*EST.d28;              // weekly est D28 trials
-  // CPT (D28-based)
+  // ── COHORT WINDOWS (autopay/trials are attributed to the user's cohort date) ──
+  // Matured zone = cohorts on/before anchor − matureDays (had ≥8d for D8 autopay)
+  const matCut=isoBack(ACT.matureDays);                 // e.g. Jun 10
+  const w2from=isoBack(ACT.matureDays+14), w1from=isoBack(ACT.matureDays+7);
+  const cohort2wk=aggRangeFor(w2from,matCut,entKey,entId);   // last 2 matured weeks
+  const cohort1wk=aggRangeFor(w1from,matCut,entKey,entId);   // last 1 matured week
+  const cohortAll=aggRangeFor('2000-01-01',matCut,entKey,entId); // all matured cohorts
+  // how many matured days of history does this entity actually have?
+  const firstSpendDate=(function(){const rs=ALL_ROWS.filter(r=>{if(!inAcctFilter(r.ad_id))return false;if(entKey==='campaign')return adCamp(r.ad_id)===entId;if(entKey==='adset')return adAset(r.ad_id)===entId;return r.ad_id===entId;}).filter(r=>r.cost>0).map(r=>r.date).sort();return rs[0]||null;})();
+  const maturedDaysOfHistory = firstSpendDate? Math.max(0, daysBetween(matCut,firstSpendDate)) : 0;
+  // pick decision cohort: ≥2 matured weeks of history → 2wk window; else 1wk window
+  const has2wk = maturedDaysOfHistory>=14 && cohort2wk.cost>0;
+  const decCohort = has2wk? cohort2wk : cohort1wk;
+  const decWindowLabel = has2wk? 'last 2 matured wks' : '1 matured wk';
+  // ── COHORT CAC / AR (the decision-grade numbers) ──
+  const cacMatured = decCohort.autopays? decCohort.cost/decCohort.autopays : null;
+  const cacAllMatured = cohortAll.autopays? cohortAll.cost/cohortAll.autopays : null;
+  const arMatured = decCohort.trials? decCohort.autopays/decCohort.trials*100 : null;   // ACTUAL trials base
+  const arAllMatured = cohortAll.trials? cohortAll.autopays/cohortAll.trials*100 : null;
+  // confidence gate keys on ACTUAL matured-cohort trials
+  const arBase = decCohort.trials;          // actual trials in the decision cohort
+  const arTrust = arBase>=ACT.minTrialsForAR;
+  const matured = decCohort.cost>0 && decCohort.autopays>0 && maturedDaysOfHistory>=7;
+  // ── CPT (D28-based, all-time and recent week) ──
+  const lifeT28=life.d0*EST.d28, wkT28=wk.d0*EST.d28;
   const cptTill=lifeT28?life.cost/lifeT28:null;
   const cptWeek=wkT28?wk.cost/wkT28:null;
-  // AR base = ACTUAL trials (not D28-est) — confidence gate
-  const arBaseTill=life.trials;          // actual lifetime trials
-  const arBaseWeek=wk.trials;            // actual weekly trials
-  const arTrust=arBaseTill>=ACT.minTrialsForAR;
-  // AR% (D28-based: autopays / est D28 trials)
-  const arTill=lifeT28?life.autopays/lifeT28*100:null;
-  // weekly AR can't have matured; estimate forward using lifetime AR applied to weekly base
-  const arWeekEst=arTill;                // best estimate for fresh week = lifetime AR
-  // CAC (D28-based)
-  const cacTill=life.autopays?life.cost/life.autopays:null;            // actual lifetime CAC
-  const cacWeekEst=(arTill&&wkT28)?wk.cost/(wkT28*(arTill/100)):null;  // est forward CAC for the week
   // Signup→Trial % (D28-based)
   const s2tTill=life.signups?lifeT28/life.signups*100:null;
   const s2tWeek=wk.signups?wkT28/wk.signups*100:null;
-  // maturity (autopay had ≥8d to develop)
-  const spendBeforeCut=aggRangeFor('2000-01-01',isoBack(ACT.matureDays),entKey,entId).cost;
-  const matured=spendBeforeCut>0&&life.autopays>0;
+  // Columns: "Till" = all matured cohorts; "Wk" = decision cohort (matured)
+  const cacTill = cacAllMatured;       // CAC over all matured cohorts
+  const cacWeekEst = cacMatured;       // CAC over decision window (matured)
+  const arTill = arAllMatured;
+  const arWeekEst = arMatured;
+  const trialsActual = cohortAll.trials;   // all matured actual trials
   // ── DECISION ──
   let flag='mod',verdict='watch',issues=[];
-  function cptDir(){if(cptTill!=null&&cptWeek!=null&&cptTill>0)return (cptWeek-cptTill)/cptTill*100;return null;}
-  const cptΔ=cptDir();
+  const cptΔ=(cptTill!=null&&cptWeek!=null&&cptTill>0)?(cptWeek-cptTill)/cptTill*100:null;
   if(isPaused){
-    // paused: only a Scale (revive) call if matured CAC good on trusted base; else watch (dead → caller may drop)
-    if(matured&&arTrust&&cacTill!=null&&cacTill<=ACT.cacGood&&life.autopays>=ACT.minAutopaysRevive){
-      flag='green';verdict='scale';issues.push(['green','Revive — matured CAC ₹'+Math.round(cacTill)+' on '+arBaseTill+' trials']);
-    } else { flag='mod';verdict='watch';issues.push(['mod','Paused — '+(arTrust?'CAC not proven':'thin base ('+arBaseTill+' trials)')]); }
+    if(matured&&arTrust&&cacMatured!=null&&cacMatured<=ACT.cacGood&&decCohort.autopays>=ACT.minAutopaysRevive){
+      flag='green';verdict='scale';issues.push(['green','Revive — matured CAC ₹'+Math.round(cacMatured)+' ('+decWindowLabel+', '+arBase+' trials)']);
+    } else { flag='mod';verdict='watch';issues.push(['mod','Paused — '+(arTrust?'CAC ₹'+(cacMatured?Math.round(cacMatured):'—')+' not scale-worthy':'thin base ('+arBase+' matured trials)')]); }
   } else if(matured&&arTrust){
-    // trusted, matured → decide on CAC
-    if(cacTill!=null&&cacTill<=ACT.cacGood){flag='green';verdict='scale';issues.push(['green','CAC ₹'+Math.round(cacTill)+' ≤ ₹'+ACT.cacGood]);}
-    else if(cacTill!=null&&cacTill>ACT.cacGood*1.3){flag='red';verdict='pause';issues.push(['red','CAC ₹'+Math.round(cacTill)+' > target']);}
+    if(cacMatured!=null&&cacMatured<=ACT.cacGood){flag='green';verdict='scale';issues.push(['green','Matured CAC ₹'+Math.round(cacMatured)+' ≤ ₹'+ACT.cacGood+' ('+decWindowLabel+')']);}
+    else if(cacMatured!=null&&cacMatured>ACT.cacGood*1.3){flag='red';verdict='pause';issues.push(['red','Matured CAC ₹'+Math.round(cacMatured)+' > ₹'+ACT.cacGood+' ('+decWindowLabel+')']);}
     else {flag='mod';verdict='watch';issues.push(['mod','CAC near target — hold']);}
   } else {
-    // immature OR thin AR base → decide on CPT only
-    if(cptTill!=null&&cptTill<ACT.cptScale&&arBaseTill>=ACT.minTrialsScale){flag='green';verdict='scale';issues.push(['green','CPT ₹'+Math.round(cptTill)+' < ₹'+ACT.cptScale+(arTrust?'':' (CAC base building)')]);}
-    else if(cptTill!=null&&cptTill>T.cpt.a&&life.cost>200&&arBaseTill>=3){flag='red';verdict='pause';issues.push(['red','CPT ₹'+Math.round(cptTill)+' > ₹'+T.cpt.a]);}
-    else if(life.cost>300&&arBaseTill===0){flag='red';verdict='pause';issues.push(['red','₹'+Math.round(life.cost)+' spent, 0 trials']);}
-    else {flag='mod';verdict='watch';issues.push(['mod','Building signal — '+arBaseTill+' trials']);}
+    // immature OR thin matured base → decide on CPT only
+    if(cptTill!=null&&cptTill<ACT.cptScale&&life.trials>=ACT.minTrialsScale){flag='green';verdict='scale';issues.push(['green','CPT ₹'+Math.round(cptTill)+' < ₹'+ACT.cptScale+(arTrust?'':' (CAC base building)')]);}
+    else if(cptTill!=null&&cptTill>T.cpt.a&&life.cost>200&&life.trials>=3){flag='red';verdict='pause';issues.push(['red','CPT ₹'+Math.round(cptTill)+' > ₹'+T.cpt.a]);}
+    else if(life.cost>300&&life.trials===0){flag='red';verdict='pause';issues.push(['red','₹'+Math.round(life.cost)+' spent, 0 trials']);}
+    else {flag='mod';verdict='watch';issues.push(['mod','Building signal — '+arBase+' matured trials']);}
   }
-  // secondary issue tags (informational, don't override flag)
   if(cptΔ!=null&&cptΔ>15)issues.push(['red','CPT ↑'+cptΔ.toFixed(0)+'% WoW']);
   else if(cptΔ!=null&&cptΔ<-15)issues.push(['green','CPT ↓'+Math.abs(cptΔ).toFixed(0)+'% WoW']);
   if(s2tTill!=null&&s2tWeek!=null&&s2tTill>0&&(s2tWeek-s2tTill)/s2tTill*100<-20)issues.push(['mod','Signup→Trial dropping']);
   const cpmTill=life.impressions?life.cost/life.impressions*1000:null,cpmWeek=wk.impressions?wk.cost/wk.impressions*1000:null;
   if(cpmTill!=null&&cpmWeek!=null&&cpmTill>0&&(cpmWeek-cpmTill)/cpmTill*100>25)issues.push(['mod','CPM ↑']);
   return {entKey,entId,isPaused,matured,arTrust,flag,verdict,issues,
-    cost:life.cost,trialsActual:arBaseTill,trialsActualWk:arBaseWeek,
+    cost:life.cost,trialsActual,trialsActualWk:arBase,maturedDaysOfHistory,decWindowLabel,
     cptTill,cptWeek,cptΔ,cacTill,cacWeekEst,arTill,arWeekEst,s2tTill,s2tWeek};
 }
 const FLAG_RANK={red:0,green:1,mod:2};
@@ -798,44 +801,71 @@ function vActions(){
     <div class="sum-card mod"><div class="sum-big">${cM+asM+adM}</div><div class="sum-label">Watch / Needs Data</div><div class="sum-detail">${cM} campaigns · ${asM} ad sets · ${adM} ads<br>building signal or thin base</div></div>
     <div class="sum-card neutral"><div class="sum-big">${campM.length}</div><div class="sum-label">Active Campaigns</div><div class="sum-detail">${Object.values(asByCamp).flat().length} ad sets · ${Object.values(adByAset).flat().length} ads<br>in ${acct==='both'?'both accounts':acct+' account'}</div></div>
   </div>`;
-  h+=`<div class="banner">⚡ Click a campaign row to expand its ad sets, then an ad set to expand its ads. <b>&nbsp;Flag:&nbsp;</b> 🟢 Scale · 🔴 Pause · 🟡 Watch. CAC & AR shown in grey with a <b>base</b> tag when actual trials &lt; ${ACT.minTrialsForAR} — too thin to trust, so the flag falls back to CPT. All CPT/CAC are D28-based.</div>`;
+  h+=`<div class="banner">⚡ Click a campaign row to expand its ad sets, then an ad set to expand its ads. <b>&nbsp;Flag:&nbsp;</b> 🟢 Scale · 🔴 Pause · 🟡 Watch. CAC & AR are <b>cohort-windowed & matured</b> (cohorts ≥${ACT.matureDays}d old); greyed with a <b>base</b> tag when matured trials &lt; ${ACT.minTrialsForAR}, so the flag falls back to CPT.</div>`;
+  // ── FILTER BAR ──
+  const fcounts={action:(cR+cG+asR+asG+adR+adG),all:(campM.length+Object.values(asByCamp).flat().length+Object.values(adByAset).flat().length)};
+  h+=`<div class="act-filter-bar"><span class="ctrl-label">Show</span>
+    <div class="seg" id="actFilterSeg">
+      <button class="seg-btn ${actFilter==='action'?'on':''}" data-af="action">⚡ Action needed (Red+Green)</button>
+      <button class="seg-btn ${actFilter==='watch'?'on':''}" data-af="watch">+ Watch</button>
+      <button class="seg-btn ${actFilter==='paused'?'on':''}" data-af="paused">Paused only</button>
+      <button class="seg-btn ${actFilter==='all'?'on':''}" data-af="all">All</button>
+    </div>
+    <span style="font-size:10.5px;color:var(--ink4);margin-left:auto;">Filter applies to all 3 levels; parents stay visible if a child matches.</span>
+  </div>`;
+  // does an entity-metrics object match the current filter?
+  function matchFilter(m){
+    if(!m)return false;
+    if(actFilter==='all')return true;
+    if(actFilter==='action')return m.flag==='red'||m.flag==='green';
+    if(actFilter==='watch')return m.flag==='red'||m.flag==='green'||m.flag==='mod';
+    if(actFilter==='paused')return m.isPaused;
+    return true;
+  }
   // ── TABLE ──
   h+=`<div class="act-tbl-wrap"><div class="act-tbl-scroll"><table class="act"><thead><tr>
     <th class="ent-col l">Campaign ▸ Ad Set ▸ Ad</th>
     <th class="l">Issue</th>
     <th class="l">Decision</th>
     <th>Spend (Till)</th>
-    <th>Trials<br>(actual)</th>
+    <th>Trials<br>(matured)</th>
     <th class="grp-div">CPT Till<br>(D28)</th>
     <th>CPT Wk<br>(D28)</th>
-    <th class="grp-div">CAC Till<br>(D28)</th>
-    <th>CAC Wk<br>(D28 est)</th>
+    <th class="grp-div">CAC Matured<br>(all cohorts)</th>
+    <th>CAC Decision<br>(2wk/1wk)</th>
     <th class="grp-div">S→T% Till<br>(D28)</th>
     <th>S→T% Wk<br>(D28)</th>
-    <th class="grp-div">AR% Till<br>(D28)</th>
-    <th>AR% Wk<br>(D28 est)</th>
+    <th class="grp-div">AR% Matured<br>(all)</th>
+    <th>AR% Decision<br>(2wk/1wk)</th>
   </tr></thead><tbody>`;
-  // sort campaigns by flag rank then spend
   campM.sort((a,b)=>FLAG_RANK[a.m.flag]-FLAG_RANK[b.m.flag]||b.m.cost-a.m.cost);
-  if(!campM.length)h+=`<tr><td colspan="13"><div class="empty-state" style="padding:40px;"><div class="empty-ic">✓</div><div>No active campaigns in this account scope.</div></div></td></tr>`;
+  let shownRows=0;
   campM.forEach(({cid,m})=>{
     const ckey='c-'+cid;const copen=actOpen[ckey];
     const cname=MAP_CAMP[cid].s;const tag=MAP_CAMP[cid].t||MAP_CAMP[cid].acct;
     const asets=(asByCamp[cid]||[]).slice().sort((a,b)=>FLAG_RANK[a.m.flag]-FLAG_RANK[b.m.flag]||b.m.cost-a.m.cost);
-    h+=actRowHTML(m,'campaign',(tag?'['+tag.toUpperCase()+'] ':'')+cname,'Camp '+cid,asets.length>0,copen,ckey);
+    // does any descendant match?
+    const asetsMatching=asets.filter(({aid,m:am})=>matchFilter(am)||(adByAset[aid]||[]).some(({m:dm})=>matchFilter(dm)));
+    const campShows=matchFilter(m)||asetsMatching.length>0;
+    if(!campShows)return;
+    shownRows++;
+    h+=actRowHTML(m,'campaign',(tag?'['+tag.toUpperCase()+'] ':'')+cname,'Camp '+cid,asetsMatching.length>0,copen,ckey);
     if(copen){
-      asets.forEach(({aid,m:am})=>{
+      asetsMatching.forEach(({aid,m:am})=>{
         const akey='as-'+aid;const aopen=actOpen[akey];
         const ads=(adByAset[aid]||[]).slice().sort((a,b)=>FLAG_RANK[a.m.flag]-FLAG_RANK[b.m.flag]||b.m.cost-a.m.cost);
-        h+=actRowHTML(am,'adset',MAP_ASET[aid].s,'AdSet '+aid,ads.length>0,aopen,akey);
-        if(aopen){ads.forEach(({adid,m:dm})=>{h+=actRowHTML(dm,'ad',MAP_AD[adid].s,'Ad '+adid,false,false,'ad-'+adid);});}
+        const adsMatching=ads.filter(({m:dm})=>matchFilter(dm));
+        h+=actRowHTML(am,'adset',MAP_ASET[aid].s,'AdSet '+aid,adsMatching.length>0,aopen,akey);
+        if(aopen){adsMatching.forEach(({adid,m:dm})=>{h+=actRowHTML(dm,'ad',MAP_AD[adid].s,'Ad '+adid,false,false,'ad-'+adid);});}
       });
     }
   });
+  if(!shownRows)h+=`<tr><td colspan="13"><div class="empty-state" style="padding:40px;"><div class="empty-ic">✓</div><div>Nothing matches this filter.</div><div style="font-size:11px;margin-top:6px;color:var(--ink4);">No entities are flagged ${actFilter==='action'?'Red or Green':actFilter}. Try a broader filter.</div></div></td></tr>`;
   h+=`</tbody></table></div></div>`;
   return h;}
 function bindTree(){
   $$('.ent-caret[data-toggle]').forEach(c=>c.onclick=ev=>{ev.stopPropagation();const k=c.dataset.toggle;actOpen[k]=!actOpen[k];render();});
+  const seg=$('#actFilterSeg');if(seg)seg.onclick=e=>{if(e.target.dataset.af){actFilter=e.target.dataset.af;render();}};
 }
 function rebuildFilters(){const fc=$('#fCampaign'),fa=$('#fAdset'),fd=$('#fAd');
   fc.innerHTML='<option value="all">All Campaigns</option>';Object.keys(MAP_CAMP).filter(id=>acct==='both'||MAP_CAMP[id].acct===acct).forEach(id=>{const o=document.createElement('option');o.value=id;o.textContent=MAP_CAMP[id].s;if(id===fCamp)o.selected=true;fc.appendChild(o);});
