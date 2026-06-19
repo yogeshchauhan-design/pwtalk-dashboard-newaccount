@@ -488,7 +488,7 @@ function drilldownHTML(e){
   html+='<div class="dd-block"><div class="dd-title">📍 Placements · Jun 1–18</div>';
   const pl=PLACEMENT[cid];
   if(pl){const tot=pl.reduce((a,r)=>a+r.imp,0);html+='<table class="dd-tbl"><thead><tr><th>Platform</th><th>Share</th><th>CTR</th><th>Spend</th></tr></thead><tbody>';
-    pl.sort((a,b)=>b.imp-a.imp).forEach(r=>{const sh=r.imp/tot*100;const isBad=r.pos==='Audience Network'&&r.ctr>5;html+=`<tr><td>${r.pos}${isBad?' ⚠️':''}</td><td>${sh.toFixed(1)}%<span class="bar-mini"><span class="bar-fill" style="width:${sh}%"></span></span></td><td><span style="font-weight:700;color:var(--${isBad?'bad':'ink2}});">${r.ctr.toFixed(2)}%</span></td><td>${money(r.spend)}</td></tr>`;});
+    pl.sort((a,b)=>b.imp-a.imp).forEach(r=>{const sh=r.imp/tot*100;const isBad=r.pos==='Audience Network'&&r.ctr>5;html+=`<tr><td>${r.pos}${isBad?' ⚠️':''}</td><td>${sh.toFixed(1)}%<span class="bar-mini"><span class="bar-fill" style="width:${sh}%"></span></span></td><td><span style="font-weight:700;color:var(--${isBad?'bad':'ink2'});">${r.ctr.toFixed(2)}%</span></td><td>${money(r.spend)}</td></tr>`;});
     html+='</tbody></table>';}else html+='<div class="dd-na">Campaign-level only</div>';
   html+='</div>';
   // AGE
