@@ -208,6 +208,9 @@ table.act{border-collapse:collapse;width:100%;font-size:11px;white-space:nowrap;
 .vc-scale{color:var(--good);}.vc-pause{color:var(--bad);}.vc-watch{color:var(--warn);}
 .act-grp-div{border-left:1px solid var(--line2);}
 .act-filter-bar{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;}
+.row-suppressed{opacity:0.5;}
+.row-suppressed td .cell{background:repeating-linear-gradient(45deg,transparent,transparent 6px,rgba(0,0,0,0.02) 6px,rgba(0,0,0,0.02) 12px);}
+.supp-tag{font-size:8px;font-weight:800;color:var(--good);background:var(--goodbg);padding:1px 5px;border-radius:4px;margin-left:5px;letter-spacing:.3px;}
 ::-webkit-scrollbar{width:8px;height:8px;}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:10px;}::-webkit-scrollbar-track{background:var(--panel2);}
 .hide{display:none!important;}
 @media(max-width:900px){.side{display:none;}.dd-grid{grid-template-columns:1fr;}}
@@ -368,6 +371,16 @@ const DEMO_GENDER={
 };
 const T={cpt:{g:100,a:150},cac:{g:450,a:500},ctr:{g:.25,a:.15},cpm:{g:20,a:30},c2i:{g:30,a:20},i2s:{g:70,a:50},s2t:{g:20,a:10},apr:{g:28,a:20},hook:{g:15,a:8},hold:{g:25,a:15}};
 const EST={d7:1.105,d14:1.14,d28:1.17};
+// ═══ AUTOPAY COHORT CURVES (#2) — addition over D7 base, by source ═══
+const AP_CURVE={
+  facebook:{D7:1.00,D14:1.24,D21:1.30,D28:1.35,D35:1.38},
+  google:  {D7:1.00,D14:1.30,D21:1.40,D28:1.45,D35:1.50},
+};
+const AP_STAGE_DAYS={D7:7,D14:14,D21:21,D28:28,D35:35};
+// which actual autopay maturity stage has a cohort of given age reached?
+function apStage(ageDays){if(ageDays>=35)return'D35';if(ageDays>=28)return'D28';if(ageDays>=21)return'D21';if(ageDays>=14)return'D14';if(ageDays>=7)return'D7';return null;}
+// project a single cohort-row's actual autopays forward to a target stage (default D35) using the source curve
+function projectAutopay(apActual,ageDays,source,target){target=target||'D35';const c=AP_CURVE[source]||AP_CURVE.facebook;const s=apStage(ageDays);if(!s)return apActual;if(s===target||AP_STAGE_DAYS[s]>=AP_STAGE_DAYS[target])return apActual;return apActual*(c[target]/c[s]);}
 // ═══ ACTIONABLES DECISION CONFIG ═══
 const ACT={
   pausedWindow:7,       // trailing days of zero cost => entity is PAUSED
@@ -378,6 +391,8 @@ const ACT={
   minTrialsScale:10,    // min trials for an immature SCALE verdict to be credible
   trailWindow:30,       // trailing window used for revive/maturity assessment
   minTrialsForAR:50,    // min ACTUAL trials before AR%/CAC is trusted to drive a decision
+  benchMargin:15,       // #3 entity must be >this% worse than account CPT/CAC to flag Pause
+  drrMoveThreshold:15,  // #5 a ±this% DRR shift counts as 'already actioned' suppression
 };
 // Entity maps — built from mapping CSV upload + Meta seed
 let MAP_CAMP={
@@ -397,11 +412,12 @@ let MAP_AD={};
 Object.keys(META_AD).forEach(id=>{const m=META_AD[id];MAP_AD[id]={s:m.s,as:m.as,c:m.c,acct:'new'};});
 let ALL_ROWS=[];
 let view='campaign',gran='dod',numCols=7,anchor='2026-06-18',search='',fCamp='all',fAset='all',fAd='all',acct='new';
-let openEnts={},collapsedGroups={},treeOpen={},actOpen={},actFilter='action';
+let openEnts={},collapsedGroups={},treeOpen={},actOpen={},actFilter='action',actShowActioned=false;
 const $=s=>document.querySelector(s);const $$=s=>document.querySelectorAll(s);
 function adCamp(id){return MAP_AD[id]?.c||'';}
 function adAset(id){return MAP_AD[id]?.as||'';}
 function adAcct(id){return MAP_AD[id]?.acct||classifyAcct(id);}
+function adSource(id){return MAP_AD[id]?.source||'facebook';} // #8 hook: Google rows will set source='google'
 function inAcctFilter(id){return acct==='both'||adAcct(id)===acct;}
 function isNewView(){return acct==='new'||acct==='both';}
 function passEntity(r){if(!inAcctFilter(r.ad_id))return false;const c=adCamp(r.ad_id),a=adAset(r.ad_id);
@@ -424,6 +440,24 @@ function aggPortfolio(from,to){
   const s={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0};
   rs.forEach(r=>{for(let k in s)s[k]+=r[k]||0;});return s;}
 function totalCostRange(from,to){return ALL_ROWS.filter(r=>r.date>=from&&r.date<=to&&passEntity(r)).reduce((a,r)=>a+r.cost,0);}
+// ═══ #2 Projected autopays for an entity/window: actual where matured, project the tail ═══
+function entRows(entKey,entId){return ALL_ROWS.filter(r=>{if(!inAcctFilter(r.ad_id))return false;if(entKey==='campaign')return adCamp(r.ad_id)===entId;if(entKey==='adset')return adAset(r.ad_id)===entId;return r.ad_id===entId;});}
+function srcOf(id){return (typeof adSource==='function'?adSource(id):'facebook');} // hook for Google later; default FB
+function projAutopaysFor(from,to,entKey,entId,target){
+  const rs=entRows(entKey,entId).filter(r=>r.date>=from&&r.date<=to);
+  let sum=0;rs.forEach(r=>{const age=daysBetween(anchor,r.date);sum+=projectAutopay(r.autopays||0,age,srcOf(r.ad_id),target);});
+  return sum;}
+// run-days: first cost>0 date → anchor (#4)
+function runDays(entKey,entId){const rs=entRows(entKey,entId).filter(r=>r.cost>0).map(r=>r.date).sort();if(!rs.length)return 0;return Math.max(1,daysBetween(anchor,rs[0])+1);}
+// DRR: avg daily spend over a window (#4)
+function drr(entKey,entId,fromDaysAgo,toDaysAgo){const f=isoBack(fromDaysAgo),t=isoBack(toDaysAgo);const c=aggRangeFor(f,t,entKey,entId).cost;const days=fromDaysAgo-toDaysAgo+1;return days>0?c/days:0;}
+// ═══ #3 Account-level CPT / CAC benchmark for a window ═══
+function accountBenchmark(from,to){
+  const rs=ALL_ROWS.filter(r=>r.date>=from&&r.date<=to&&inAcctFilter(r.ad_id));
+  let cost=0,d0=0;rs.forEach(r=>{cost+=r.cost;d0+=r.d0||0;});
+  let projAP=0;rs.forEach(r=>{const age=daysBetween(anchor,r.date);projAP+=projectAutopay(r.autopays||0,age,srcOf(r.ad_id));});
+  const t28=d0*EST.d28;
+  return {cpt:t28?cost/t28:null,cac:projAP?cost/projAP:null,cost,trials28:t28,autopays:projAP};}
 function cls(v,g,a,hi){if(v===null||v===undefined||isNaN(v))return'';return hi?(v>=g?'good':v>=a?'warn':'bad'):(v<=g?'good':v<=a?'warn':'bad');}
 function money(n){return(!n||isNaN(n))?'—':'₹'+Math.round(n).toLocaleString('en-IN');}
 function num(n){return(n===null||n===undefined||isNaN(n))?'—':n>=100000?(n/100000).toFixed(1)+'L':n>=1000?(n/1000).toFixed(1)+'K':Math.round(n).toString();}
@@ -688,54 +722,81 @@ function entMetrics(entKey,entId){
   const has2wk = maturedDaysOfHistory>=14 && cohort2wk.cost>0;
   const decCohort = has2wk? cohort2wk : cohort1wk;
   const decWindowLabel = has2wk? 'last 2 matured wks' : '1 matured wk';
-  // ── COHORT CAC / AR (the decision-grade numbers) ──
-  const cacMatured = decCohort.autopays? decCohort.cost/decCohort.autopays : null;
-  const cacAllMatured = cohortAll.autopays? cohortAll.cost/cohortAll.autopays : null;
-  const arMatured = decCohort.trials? decCohort.autopays/decCohort.trials*100 : null;   // ACTUAL trials base
-  const arAllMatured = cohortAll.trials? cohortAll.autopays/cohortAll.trials*100 : null;
-  // confidence gate keys on ACTUAL matured-cohort trials
-  const arBase = decCohort.trials;          // actual trials in the decision cohort
+  // ── COHORT CAC / AR using PROJECTED autopays (#2: actual where matured, project tail) ──
+  const ap_decCohort = projAutopaysFor(decCohort._from||(has2wk?w2from:w1from), matCut, entKey, entId);
+  const ap_allMatured = projAutopaysFor('2000-01-01', matCut, entKey, entId);
+  const cacMatured = ap_decCohort? decCohort.cost/ap_decCohort : null;
+  const cacAllMatured = ap_allMatured? cohortAll.cost/ap_allMatured : null;
+  const arMatured = decCohort.trials? ap_decCohort/decCohort.trials*100 : null;
+  const arAllMatured = cohortAll.trials? ap_allMatured/cohortAll.trials*100 : null;
+  // ── #2 AR cohort ladder: AR(Dn)=Dn trials ÷ D(n+7) projected autopays ──
+  // headline AR = most-matured cohort available
+  const arLadder={};
+  [['D0','d0','D7'],['D7','d7','D14'],['D14','d14','D21'],['D28','d28','D35']].forEach(([lbl,tk,apTarget])=>{
+    const t=cohortAll[tk]||0; const ap=t>0? projAutopaysFor('2000-01-01',matCut,entKey,entId,apTarget):0;
+    arLadder[lbl]= t>0? ap/t*100 : null;
+  });
+  // most matured available cohort with data, for headline
+  let headlineAR=null,headlineARLabel='—';
+  ['D28','D14','D7','D0'].forEach(l=>{if(headlineAR===null&&arLadder[l]!=null){headlineAR=arLadder[l];headlineARLabel='AR('+l+')';}});
+  const arBase = decCohort.trials;
   const arTrust = arBase>=ACT.minTrialsForAR;
-  const matured = decCohort.cost>0 && decCohort.autopays>0 && maturedDaysOfHistory>=7;
-  // ── CPT (D28-based, all-time and recent week) ──
+  const matured = decCohort.cost>0 && ap_decCohort>0 && maturedDaysOfHistory>=7;
+  // ── CPT (D28-based) ──
   const lifeT28=life.d0*EST.d28, wkT28=wk.d0*EST.d28;
   const cptTill=lifeT28?life.cost/lifeT28:null;
   const cptWeek=wkT28?wk.cost/wkT28:null;
-  // Signup→Trial % (D28-based)
   const s2tTill=life.signups?lifeT28/life.signups*100:null;
   const s2tWeek=wk.signups?wkT28/wk.signups*100:null;
-  // Columns: "Till" = all matured cohorts; "Wk" = decision cohort (matured)
-  const cacTill = cacAllMatured;       // CAC over all matured cohorts
-  const cacWeekEst = cacMatured;       // CAC over decision window (matured)
-  const arTill = arAllMatured;
-  const arWeekEst = arMatured;
-  const trialsActual = cohortAll.trials;   // all matured actual trials
+  const cacTill=cacAllMatured, cacWeekEst=cacMatured, arTill=arAllMatured, arWeekEst=arMatured;
+  const trialsActual=cohortAll.trials;
+  // ── #4 run-days + DRR ──
+  const rd=runDays(entKey,entId);
+  const drrLast7=drr(entKey,entId,6,0);      // last 7 days avg daily spend
+  const drrPrev7=drr(entKey,entId,13,7);     // the 7 days before that (W-1)
+  const drrΔ = drrPrev7>0? (drrLast7-drrPrev7)/drrPrev7*100 : (drrLast7>0?100:0);
+  // ── #3 account benchmark (this entity's evaluation window) ──
+  const benchWin = has2wk? {f:w2from,t:matCut} : {f:w1from,t:matCut};
+  const bench = accountBenchmark(benchWin.f,benchWin.t);
+  const cacVsAcct = (bench.cac&&cacMatured)? (cacMatured-bench.cac)/bench.cac*100 : null;
+  const cptVsAcct = (bench.cpt&&cptTill)? (cptTill-bench.cpt)/bench.cpt*100 : null;
   // ── DECISION ──
   let flag='mod',verdict='watch',issues=[];
   const cptΔ=(cptTill!=null&&cptWeek!=null&&cptTill>0)?(cptWeek-cptTill)/cptTill*100:null;
   if(isPaused){
-    if(matured&&arTrust&&cacMatured!=null&&cacMatured<=ACT.cacGood&&decCohort.autopays>=ACT.minAutopaysRevive){
+    if(matured&&arTrust&&cacMatured!=null&&cacMatured<=ACT.cacGood&&ap_decCohort>=ACT.minAutopaysRevive){
       flag='green';verdict='scale';issues.push(['green','Revive — matured CAC ₹'+Math.round(cacMatured)+' ('+decWindowLabel+', '+arBase+' trials)']);
     } else { flag='mod';verdict='watch';issues.push(['mod','Paused — '+(arTrust?'CAC ₹'+(cacMatured?Math.round(cacMatured):'—')+' not scale-worthy':'thin base ('+arBase+' matured trials)')]); }
   } else if(matured&&arTrust){
     if(cacMatured!=null&&cacMatured<=ACT.cacGood){flag='green';verdict='scale';issues.push(['green','Matured CAC ₹'+Math.round(cacMatured)+' ≤ ₹'+ACT.cacGood+' ('+decWindowLabel+')']);}
-    else if(cacMatured!=null&&cacMatured>ACT.cacGood*1.3){flag='red';verdict='pause';issues.push(['red','Matured CAC ₹'+Math.round(cacMatured)+' > ₹'+ACT.cacGood+' ('+decWindowLabel+')']);}
+    else if(cacMatured!=null&&cacMatured>ACT.cacGood*1.3&&(cacVsAcct==null||cacVsAcct>ACT.benchMargin)){
+      // #3: only Pause if also worse than account by margin (or no account baseline)
+      flag='red';verdict='pause';issues.push(['red','CAC ₹'+Math.round(cacMatured)+' > target'+(cacVsAcct!=null?' & '+cacVsAcct.toFixed(0)+'% over acct':'')]);}
+    else if(cacMatured!=null&&cacMatured>ACT.cacGood*1.3){flag='mod';verdict='watch';issues.push(['mod','CAC high but near account avg — give time']);}
     else {flag='mod';verdict='watch';issues.push(['mod','CAC near target — hold']);}
   } else {
-    // immature OR thin matured base → decide on CPT only
     if(cptTill!=null&&cptTill<ACT.cptScale&&life.trials>=ACT.minTrialsScale){flag='green';verdict='scale';issues.push(['green','CPT ₹'+Math.round(cptTill)+' < ₹'+ACT.cptScale+(arTrust?'':' (CAC base building)')]);}
-    else if(cptTill!=null&&cptTill>T.cpt.a&&life.cost>200&&life.trials>=3){flag='red';verdict='pause';issues.push(['red','CPT ₹'+Math.round(cptTill)+' > ₹'+T.cpt.a]);}
+    else if(cptTill!=null&&cptTill>T.cpt.a&&life.cost>200&&life.trials>=3&&(cptVsAcct==null||cptVsAcct>ACT.benchMargin)){
+      flag='red';verdict='pause';issues.push(['red','CPT ₹'+Math.round(cptTill)+' > ₹'+T.cpt.a+(cptVsAcct!=null?' & '+cptVsAcct.toFixed(0)+'% over acct':'')]);}
+    else if(cptTill!=null&&cptTill>T.cpt.a&&life.cost>200){flag='mod';verdict='watch';issues.push(['mod','CPT high but tracking account — give time']);}
     else if(life.cost>300&&life.trials===0){flag='red';verdict='pause';issues.push(['red','₹'+Math.round(life.cost)+' spent, 0 trials']);}
     else {flag='mod';verdict='watch';issues.push(['mod','Building signal — '+arBase+' matured trials']);}
   }
+  // ── #5 already-actioned suppression ──
+  // if recent DRR already moved in the direction the verdict implies, suppress
+  let suppressed=false,suppressReason='';
+  if(verdict==='scale' && drrΔ>=ACT.drrMoveThreshold){suppressed=true;suppressReason='Budget already ↑'+drrΔ.toFixed(0)+'% last 7d vs W-1 — scale acted on';}
+  else if(verdict==='pause' && (drrΔ<=-ACT.drrMoveThreshold||isPaused)){suppressed=true;suppressReason='Budget already ↓'+Math.abs(drrΔ).toFixed(0)+'% last 7d vs W-1 — cut acted on';}
   if(cptΔ!=null&&cptΔ>15)issues.push(['red','CPT ↑'+cptΔ.toFixed(0)+'% WoW']);
   else if(cptΔ!=null&&cptΔ<-15)issues.push(['green','CPT ↓'+Math.abs(cptΔ).toFixed(0)+'% WoW']);
   if(s2tTill!=null&&s2tWeek!=null&&s2tTill>0&&(s2tWeek-s2tTill)/s2tTill*100<-20)issues.push(['mod','Signup→Trial dropping']);
   const cpmTill=life.impressions?life.cost/life.impressions*1000:null,cpmWeek=wk.impressions?wk.cost/wk.impressions*1000:null;
   if(cpmTill!=null&&cpmWeek!=null&&cpmTill>0&&(cpmWeek-cpmTill)/cpmTill*100>25)issues.push(['mod','CPM ↑']);
-  return {entKey,entId,isPaused,matured,arTrust,flag,verdict,issues,
+  return {entKey,entId,isPaused,matured,arTrust,flag,verdict,issues,suppressed,suppressReason,
     cost:life.cost,trialsActual,trialsActualWk:arBase,maturedDaysOfHistory,decWindowLabel,
-    cptTill,cptWeek,cptΔ,cacTill,cacWeekEst,arTill,arWeekEst,s2tTill,s2tWeek};
+    cptTill,cptWeek,cptΔ,cacTill,cacWeekEst,arTill,arWeekEst,s2tTill,s2tWeek,
+    arLadder,headlineAR,headlineARLabel,runDays:rd,drrLast7,drrPrev7,drrΔ,cacVsAcct,cptVsAcct,
+    acctCac:bench.cac,acctCpt:bench.cpt};
 }
 const FLAG_RANK={red:0,green:1,mod:2};
 function flagDot(f){return `<span class="flag-dot flag-${f}"></span>`;}
@@ -756,15 +817,18 @@ function actRowHTML(m,level,name,ids,expandable,isOpen,rowKey){
   const lvlCls=level==='campaign'?'lvl-c':level==='adset'?'lvl-as':'lvl-ad';
   const indent=level==='adset'?'ent-indent-as':level==='ad'?'ent-indent-ad':'';
   const verdictTxt=m.verdict==='scale'?'<span class="verdict-cell vc-scale">▲ Scale</span>':m.verdict==='pause'?'<span class="verdict-cell vc-pause">■ Pause</span>':'<span class="verdict-cell vc-watch">● Watch</span>';
-  return `<tr class="act-row ${lvlCls}" data-rowkey="${rowKey||''}">
+  const drrArrow=m.drrΔ>=ACT.drrMoveThreshold?'<span class="cell-delta d-better">▲'+m.drrΔ.toFixed(0)+'%</span>':m.drrΔ<=-ACT.drrMoveThreshold?'<span class="cell-delta d-worse">▼'+Math.abs(m.drrΔ).toFixed(0)+'%</span>':'';
+  return `<tr class="act-row ${lvlCls} ${m.suppressed?'row-suppressed':''}" data-rowkey="${rowKey||''}">
     <td class="ent-col"><div class="ent-cell ${indent}">
       <span class="ent-caret ${expandable?(isOpen?'open':''):'leaf'}" ${expandable?`data-toggle="${rowKey}"`:''}>▶</span>
       ${flagDot(m.flag)}
-      <div class="ent-meta"><div class="ent-nm" title="${name}">${name}</div><div class="ent-id">${ids}</div></div>
+      <div class="ent-meta"><div class="ent-nm" title="${name}">${name}${m.suppressed?' <span class="supp-tag" title="'+m.suppressReason+'">✓ actioned</span>':''}</div><div class="ent-id">${ids} · ${m.runDays}d run</div></div>
     </div></td>
     <td>${issueCell(m.issues)}</td>
     <td><div class="cell">${verdictTxt}</div></td>
     <td><div class="cell" style="font-weight:700;">${money(m.cost)}</div></td>
+    <td class="act-grp-div"><div class="cell">${money(m.drrLast7)}${drrArrow}</div></td>
+    <td><div class="cell" style="color:var(--ink3);">${money(m.drrPrev7)}</div></td>
     <td><div class="cell">${num(m.trialsActual)}</div></td>
     <td class="act-grp-div">${vCell(m.cptTill,money,{th:[T.cpt.g,T.cpt.a,0]})}</td>
     <td><div class="cell">${m.cptWeek!=null&&!isNaN(m.cptWeek)?money(m.cptWeek)+deltaArrow(m.cptTill,m.cptWeek,true):'—'}</div></td>
@@ -772,7 +836,7 @@ function actRowHTML(m,level,name,ids,expandable,isOpen,rowKey){
     <td>${vCell(m.cacWeekEst,money,{th:[T.cac.g,T.cac.a,0],lowbase:lb,base:m.trialsActual})}</td>
     <td class="act-grp-div">${vCell(m.s2tTill,pct,{th:[T.s2t.g,T.s2t.a,1]})}</td>
     <td><div class="cell">${m.s2tWeek!=null&&!isNaN(m.s2tWeek)?pct(m.s2tWeek)+deltaArrow(m.s2tTill,m.s2tWeek,false):'—'}</div></td>
-    <td class="act-grp-div">${vCell(m.arTill,pct,{th:[T.apr.g,T.apr.a,1],lowbase:lb,base:m.trialsActual})}</td>
+    <td class="act-grp-div">${vCell(m.arTill,pct,{th:[T.apr.g,T.apr.a,1],lowbase:lb,base:m.trialsActual})}<div class="cell" style="padding-top:0;font-size:8px;color:var(--ink4);">${m.headlineARLabel}</div></td>
     <td>${vCell(m.arWeekEst,pct,{th:[T.apr.g,T.apr.a,1],lowbase:lb,base:m.trialsActual})}</td>
   </tr>`;}
 function vActions(){
@@ -803,7 +867,7 @@ function vActions(){
   </div>`;
   h+=`<div class="banner">⚡ Click a campaign row to expand its ad sets, then an ad set to expand its ads. <b>&nbsp;Flag:&nbsp;</b> 🟢 Scale · 🔴 Pause · 🟡 Watch. CAC & AR are <b>cohort-windowed & matured</b> (cohorts ≥${ACT.matureDays}d old); greyed with a <b>base</b> tag when matured trials &lt; ${ACT.minTrialsForAR}, so the flag falls back to CPT.</div>`;
   // ── FILTER BAR ──
-  const fcounts={action:(cR+cG+asR+asG+adR+adG),all:(campM.length+Object.values(asByCamp).flat().length+Object.values(adByAset).flat().length)};
+  const suppCount=[...campM.map(x=>x.m),...Object.values(asByCamp).flat().map(x=>x.m),...Object.values(adByAset).flat().map(x=>x.m)].filter(m=>m&&m.suppressed&&(m.flag==='red'||m.flag==='green')).length;
   h+=`<div class="act-filter-bar"><span class="ctrl-label">Show</span>
     <div class="seg" id="actFilterSeg">
       <button class="seg-btn ${actFilter==='action'?'on':''}" data-af="action">⚡ Action needed (Red+Green)</button>
@@ -811,11 +875,13 @@ function vActions(){
       <button class="seg-btn ${actFilter==='paused'?'on':''}" data-af="paused">Paused only</button>
       <button class="seg-btn ${actFilter==='all'?'on':''}" data-af="all">All</button>
     </div>
-    <span style="font-size:10.5px;color:var(--ink4);margin-left:auto;">Filter applies to all 3 levels; parents stay visible if a child matches.</span>
+    <button class="btn-sm ${actShowActioned?'on':''}" id="showActionedBtn">${actShowActioned?'✓ ':''}Show already-actioned (${suppCount})</button>
+    <span style="font-size:10.5px;color:var(--ink4);margin-left:auto;">Suppressed = budget already moved in the recommended direction (last 7d vs W-1).</span>
   </div>`;
   // does an entity-metrics object match the current filter?
   function matchFilter(m){
     if(!m)return false;
+    if(m.suppressed&&!actShowActioned)return false;  // #5 hide already-actioned unless toggled
     if(actFilter==='all')return true;
     if(actFilter==='action')return m.flag==='red'||m.flag==='green';
     if(actFilter==='watch')return m.flag==='red'||m.flag==='green'||m.flag==='mod';
@@ -828,6 +894,8 @@ function vActions(){
     <th class="l">Issue</th>
     <th class="l">Decision</th>
     <th>Spend (Till)</th>
+    <th class="grp-div">DRR L7<br>(avg/day)</th>
+    <th>DRR W-1<br>(avg/day)</th>
     <th>Trials<br>(matured)</th>
     <th class="grp-div">CPT Till<br>(D28)</th>
     <th>CPT Wk<br>(D28)</th>
@@ -860,12 +928,13 @@ function vActions(){
       });
     }
   });
-  if(!shownRows)h+=`<tr><td colspan="13"><div class="empty-state" style="padding:40px;"><div class="empty-ic">✓</div><div>Nothing matches this filter.</div><div style="font-size:11px;margin-top:6px;color:var(--ink4);">No entities are flagged ${actFilter==='action'?'Red or Green':actFilter}. Try a broader filter.</div></div></td></tr>`;
+  if(!shownRows)h+=`<tr><td colspan="15"><div class="empty-state" style="padding:40px;"><div class="empty-ic">✓</div><div>Nothing matches this filter.</div><div style="font-size:11px;margin-top:6px;color:var(--ink4);">No entities are flagged ${actFilter==='action'?'Red or Green':actFilter}. Try a broader filter.</div></div></td></tr>`;
   h+=`</tbody></table></div></div>`;
   return h;}
 function bindTree(){
   $$('.ent-caret[data-toggle]').forEach(c=>c.onclick=ev=>{ev.stopPropagation();const k=c.dataset.toggle;actOpen[k]=!actOpen[k];render();});
   const seg=$('#actFilterSeg');if(seg)seg.onclick=e=>{if(e.target.dataset.af){actFilter=e.target.dataset.af;render();}};
+  const sab=$('#showActionedBtn');if(sab)sab.onclick=()=>{actShowActioned=!actShowActioned;render();};
 }
 function rebuildFilters(){const fc=$('#fCampaign'),fa=$('#fAdset'),fd=$('#fAd');
   fc.innerHTML='<option value="all">All Campaigns</option>';Object.keys(MAP_CAMP).filter(id=>acct==='both'||MAP_CAMP[id].acct===acct).forEach(id=>{const o=document.createElement('option');o.value=id;o.textContent=MAP_CAMP[id].s;if(id===fCamp)o.selected=true;fc.appendChild(o);});
