@@ -425,6 +425,10 @@ const ACT={
   benchMargin:15,       // #3 entity must be >this% worse than account CPT/CAC to flag Pause
   drrMoveThreshold:15,  // #5 a ±this% DRR shift counts as 'already actioned' suppression
   funnelMinDev:15,      // #4 a funnel link must deviate ≥this% (vs acct or own W-1) to be named a driver
+  minImpr:5000,         // #4 min impressions in BOTH windows before CPM/CTR can be named a driver
+  minClicks:50,         // min clicks before Click→Install can be a driver
+  minInstalls:20,       // min installs before Install→Signup can be a driver
+  minSignups:15,        // min signups before Signup→Trial can be a driver
 };
 // Entity maps — built from mapping CSV upload + Meta seed
 let MAP_CAMP={
@@ -854,6 +858,16 @@ function entMetrics(entKey,entId){
     s2t:a.signups?a.d0/a.signups*100:null };}
   const rCur=rates(wk), rOwn=rates(wkW1), rOwn2=rates(wkW2);
   const acctWk=(function(){const rs=ALL_ROWS.filter(r=>r.date>=isoBack(6)&&r.date<=anchor&&inAcctFilter(r.ad_id));const s={impressions:0,clicks:0,installs:0,signups:0,d0:0,cost:0};rs.forEach(r=>{for(let k in s)s[k]+=r[k]||0;});return rates(s);})();
+  // per-link minimum-volume gate: the DENOMINATOR of each rate must clear a floor in BOTH
+  // the current and prior window, else the ratio is statistical noise and cannot be a driver.
+  // (parallels the ≥50-trial AR gate — a 406% CPM swing on 300 impressions is not a real auction story)
+  const volOK={
+    cpm: (wk.impressions>=ACT.minImpr && wkW1.impressions>=ACT.minImpr),
+    ctr: (wk.impressions>=ACT.minImpr && wkW1.impressions>=ACT.minImpr),
+    c2i: (wk.clicks>=ACT.minClicks && wkW1.clicks>=ACT.minClicks),
+    i2s: (wk.installs>=ACT.minInstalls && wkW1.installs>=ACT.minInstalls),
+    s2t: (wk.signups>=ACT.minSignups && wkW1.signups>=ACT.minSignups),
+  };
   const funnel=[
     {k:'cpm',label:'CPM',hiWorse:true,act:'media/bid/audience'},
     {k:'ctr',label:'CTR',hiWorse:false,act:'creative refresh'},
@@ -864,6 +878,7 @@ function entMetrics(entKey,entId){
   const drivers=[];
   funnel.forEach(f=>{
     const cur=rCur[f.k]; if(cur==null)return;
+    if(!volOK[f.k])return; // VOLUME GATE — skip links with too thin a denominator to trust
     const ownV=rOwn[f.k], acctV=acctWk[f.k];
     // SELF deviation vs own prior week — the trigger
     let devOwn=(ownV&&ownV>0)?(cur-ownV)/ownV*100:null;
