@@ -211,6 +211,29 @@ table.act{border-collapse:collapse;width:100%;font-size:11px;white-space:nowrap;
 .row-suppressed{opacity:0.5;}
 .row-suppressed td .cell{background:repeating-linear-gradient(45deg,transparent,transparent 6px,rgba(0,0,0,0.02) 6px,rgba(0,0,0,0.02) 12px);}
 .supp-tag{font-size:8px;font-weight:800;color:var(--good);background:var(--goodbg);padding:1px 5px;border-radius:4px;margin-left:5px;letter-spacing:.3px;}
+/* ── flat ledger ── */
+.led-flag-head{font-size:13px;font-weight:800;padding:10px 14px;border-radius:10px;margin:18px 0 10px;display:flex;align-items:center;gap:10px;}
+.led-flag-head.paused{background:var(--badbg);color:var(--bad);border:1px solid rgba(224,68,91,.25);}
+.led-flag-head.running{background:var(--goodbg);color:var(--good);border:1px solid rgba(15,163,114,.25);}
+.led-flag-head.mod{background:var(--warnbg);color:var(--warn);border:1px solid rgba(217,138,0,.25);}
+table.act.led{font-size:10px;}
+.act.led thead th{font-size:9px;padding:6px 8px;}
+.led-grouphead th{background:var(--panel3);border-bottom:1px solid var(--line2);text-align:center;color:var(--brand);font-size:8.5px;letter-spacing:.4px;text-transform:uppercase;}
+.led-subhead th{background:var(--panel2);font-size:8.5px;top:26px;}
+.act.led .led-c-col{left:0;position:sticky;z-index:4;background:var(--panel2);min-width:150px;border-right:1px solid var(--line2);}
+.act.led tbody td.led-c-col{background:var(--panel);z-index:2;}
+.led-id{text-align:left;font-family:var(--f);padding:6px 8px!important;max-width:150px;}
+.led-id .ent-nm{font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;}
+.led-id .ent-id{font-size:8px;color:var(--ink4);}
+.led-issue{max-width:180px;white-space:normal;}
+.led-acct td{background:var(--brandbg)!important;font-weight:700;position:sticky;top:52px;z-index:3;border-bottom:2px solid var(--brand);}
+.led-acct td.led-c-col{background:var(--brandbg)!important;color:var(--brand);}
+.led-row.flag-l-red td.led-c-col{box-shadow:inset 3px 0 0 var(--bad);}
+.led-row.flag-l-green td.led-c-col{box-shadow:inset 3px 0 0 var(--good);}
+.led-row.flag-l-mod td.led-c-col{box-shadow:inset 3px 0 0 var(--warn);}
+.src-pill{display:inline-block;font-size:8px;font-weight:800;width:14px;height:14px;line-height:14px;text-align:center;border-radius:4px;margin-right:5px;vertical-align:middle;}
+.src-facebook{background:var(--brandbg);color:var(--brand);}
+.src-google{background:#e8f0e8;color:#3a7d3a;}
 ::-webkit-scrollbar{width:8px;height:8px;}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:10px;}::-webkit-scrollbar-track{background:var(--panel2);}
 .hide{display:none!important;}
 @media(max-width:900px){.side{display:none;}.dd-grid{grid-template-columns:1fr;}}
@@ -412,7 +435,7 @@ let MAP_AD={};
 Object.keys(META_AD).forEach(id=>{const m=META_AD[id];MAP_AD[id]={s:m.s,as:m.as,c:m.c,acct:'new'};});
 let ALL_ROWS=[];
 let view='campaign',gran='dod',numCols=7,anchor='2026-06-18',search='',fCamp='all',fAset='all',fAd='all',acct='new';
-let openEnts={},collapsedGroups={},treeOpen={},actOpen={},actFilter='action',actShowActioned=false;
+let openEnts={},collapsedGroups={},treeOpen={},actOpen={},actFilter='action',actShowActioned=false,actGrain='adset';
 const $=s=>document.querySelector(s);const $$=s=>document.querySelectorAll(s);
 function adCamp(id){return MAP_AD[id]?.c||'';}
 function adAset(id){return MAP_AD[id]?.as||'';}
@@ -440,6 +463,7 @@ function aggPortfolio(from,to){
   const s={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0};
   rs.forEach(r=>{for(let k in s)s[k]+=r[k]||0;});return s;}
 function totalCostRange(from,to){return ALL_ROWS.filter(r=>r.date>=from&&r.date<=to&&passEntity(r)).reduce((a,r)=>a+r.cost,0);}
+function portfolioProjAutopay(from,to,target){return ALL_ROWS.filter(r=>r.date>=from&&r.date<=to&&inAcctFilter(r.ad_id)).reduce((a,r)=>a+projectAutopay(r.autopays||0,daysBetween(anchor,r.date),srcOf(r.ad_id),target),0);}
 // ═══ #2 Projected autopays for an entity/window: actual where matured, project the tail ═══
 function entRows(entKey,entId){return ALL_ROWS.filter(r=>{if(!inAcctFilter(r.ad_id))return false;if(entKey==='campaign')return adCamp(r.ad_id)===entId;if(entKey==='adset')return adAset(r.ad_id)===entId;return r.ad_id===entId;});}
 function srcOf(id){return (typeof adSource==='function'?adSource(id):'facebook');} // hook for Google later; default FB
@@ -504,18 +528,31 @@ const METRIC_DEFS={
     {k:'cpt_est_d28',label:'CPT Est D28',fmt:money,calc:s=>s.d0?s.cost/(s.d0*EST.d28):null,th:[T.cpt.g,T.cpt.a,0]},
   ],
   cac:[
-    {k:'autopay',label:'Autopay',fmt:num,calc:s=>s.autopays,early:true,abs:true},
+    {k:'autopay',label:'Autopay (actual)',fmt:num,calc:s=>s.autopays,early:true,abs:true},
     {k:'apr',label:'Autopay Rate %',fmt:pct,calc:s=>s.trials?s.autopays/s.trials*100:null,th:[T.apr.g,T.apr.a,1],early:true},
     {k:'cac',label:'CAC Current',fmt:money,calc:s=>s.autopays?s.cost/s.autopays:null,th:[T.cac.g,T.cac.a,0],early:true},
+  ],
+  autopayco:[
+    {k:'ap_d7',label:'Autopay D7 (actual)',fmt:num,ap:'D7',abs:true},
+    {k:'ap_d14',label:'Autopay D14 (proj)',fmt:num,ap:'D14',abs:true},
+    {k:'ap_d21',label:'Autopay D21 (proj)',fmt:num,ap:'D21',abs:true},
+    {k:'ap_d28',label:'Autopay D28 (proj)',fmt:num,ap:'D28',abs:true},
+    {k:'ap_d35',label:'Autopay D35 (proj)',fmt:num,ap:'D35',abs:true},
+    {k:'ar_d0',label:'AR(D0) = D0÷D7ap',fmt:pct,arc:'D0',th:[T.apr.g,T.apr.a,1]},
+    {k:'ar_d7',label:'AR(D7) = D7÷D14ap',fmt:pct,arc:'D7',th:[T.apr.g,T.apr.a,1]},
+    {k:'ar_d14',label:'AR(D14) = D14÷D21ap',fmt:pct,arc:'D14',th:[T.apr.g,T.apr.a,1]},
+    {k:'ar_d28',label:'AR(D28) = D28÷D35ap',fmt:pct,arc:'D28',th:[T.apr.g,T.apr.a,1]},
   ],
   video:[
     {k:'hook',label:'Hook Rate (3s÷Impr)',fmt:pct,calc:()=>null,vid:'hook',th:[T.hook.g,T.hook.a,1]},
     {k:'hold',label:'Hold Rate (Thru÷3s)',fmt:pct,calc:()=>null,vid:'hold',th:[T.hold.g,T.hold.a,1]},
   ],
 };
-const GROUP_LABELS={marketing:'Marketing',funnel:'Funnel',trials:'Trial Cohorts',cpt:'CPT Cohorts',cac:'CAC & Autopay',video:'Video (new acct · Jun 1–18)'};
+const GROUP_LABELS={marketing:'Marketing',funnel:'Funnel',trials:'Trial Cohorts',cpt:'CPT Cohorts',cac:'CAC & Autopay',autopayco:'Autopay Cohort Maturation (proj)',video:'Video (new acct · Jun 1–18)'};
 let rowVisible={};
 Object.keys(METRIC_DEFS).forEach(g=>METRIC_DEFS[g].forEach(m=>{rowVisible[m.k]=!m.abs;}));
+// autopay cohort group: show the AR ladder by default, keep raw autopay counts off (abs)
+['ar_d0','ar_d7','ar_d14','ar_d28'].forEach(k=>rowVisible[k]=true);
 function setView(v){view=v;$$('.nav-item').forEach(n=>n.classList.toggle('on',n.dataset.view===v));
   const ti={campaign:['Campaigns','Time-series matrix'],adset:['Ad Sets','Time-series matrix'],ad:['Ads','Time-series matrix'],creative:['Video Metrics','Hook & hold · Jun 1–18'],placement:['Placements','Platform split · Jun 1–18'],demo:['Demographics','Age & gender · Jun 1–18'],actions:['Actionables','Running vs Paused · Scale / Pause decisions only']};
   $('#pgTitle').textContent=ti[v][0];$('#pgSub').textContent=ti[v][1];render();}
@@ -572,7 +609,10 @@ function portfolioMatrixHTML(){
     html+=`<tr class="grp-row ${gcol?'collapsed':''}" data-grp="pf-${g}"><td class="metric-name" style="position:sticky;left:0;"><span class="gcaret">▼</span> ${GROUP_LABELS[g]}</td><td colspan="${numCols+1}"></td></tr>`;
     if(gcol)return;
     defs.forEach(md=>{
-      const vals=sums.map(s=>md.calc(s,{totCost:s.cost}));
+      const vals=sums.map((s,idx)=>{
+        if(md.ap){const P=periods()[idx];return portfolioProjAutopay(P.from,P.to,md.ap);}
+        if(md.arc){const P=periods()[idx];const tk={D0:'d0',D7:'d7',D14:'d14',D28:'d28'}[md.arc];const apt={D0:'D7',D7:'D14',D14:'D21',D28:'D35'}[md.arc];const t=s[tk]||0;if(!t)return null;return portfolioProjAutopay(P.from,P.to,apt)/t*100;}
+        return md.calc(s,{totCost:s.cost});});
       const v0=vals[0],v1=vals[1];let dHTML='—';
       if(v0!==null&&v1!==null&&v1!==0&&!isNaN(v0)&&!isNaN(v1)){const d=((v0-v1)/v1*100);const up=d>0;const hi=md.th?md.th[2]===1:true;const good=hi?up:!up;dHTML=`<span class="${good?(up?'d-up-g':'d-dn-g'):(up?'d-up-b':'d-dn-b')}">${up?'▲':'▼'}${Math.abs(d).toFixed(0)}%</span>`;}
       html+=`<tr><td class="metric-name">${md.label}${md.early?' <span style="font-size:8px;color:var(--ink4)">D8+</span>':''}</td>`;
@@ -626,7 +666,11 @@ function vMatrix(level){const P=periods();let ents=[];
       html+=`<tr class="grp-row ${gcol?'collapsed':''}" data-grp="${g}"><td class="metric-name" style="position:sticky;left:0;"><span class="gcaret">▼</span> ${GROUP_LABELS[g]}</td><td colspan="${numCols+1}"></td></tr>`;
       if(gcol)return;
       defs.forEach(md=>{
-        const vals=sums.map((s,idx)=>{if(md.vid)return videoVal(e,md.vid);const metaCPR=e.key==='campaign'?META_CAMP[e.id]?.cpr:null;return md.calc(s,{totCost:tots[idx],metaCPR});});
+        const vals=sums.map((s,idx)=>{
+          if(md.vid)return videoVal(e,md.vid);
+          if(md.ap){const P=periods()[idx];return projAutopaysFor(P.from,P.to,e.key,e.id,md.ap);}
+          if(md.arc){const P=periods()[idx];const tk={D0:'d0',D7:'d7',D14:'d14',D28:'d28'}[md.arc];const apt={D0:'D7',D7:'D14',D14:'D21',D28:'D35'}[md.arc];const t=s[tk]||0;if(!t)return null;const ap=projAutopaysFor(P.from,P.to,e.key,e.id,apt);return ap/t*100;}
+          const metaCPR=e.key==='campaign'?META_CAMP[e.id]?.cpr:null;return md.calc(s,{totCost:tots[idx],metaCPR});});
         const v0=vals[0],v1=vals[1];let dHTML='—';
         if(v0!==null&&v1!==null&&v1!==0&&!isNaN(v0)&&!isNaN(v1)){const d=((v0-v1)/v1*100);const up=d>0;const hi=md.th?md.th[2]===1:true;const good=hi?up:!up;dHTML=`<span class="${good?(up?'d-up-g':'d-dn-g'):(up?'d-up-b':'d-dn-b')}">${up?'▲':'▼'}${Math.abs(d).toFixed(0)}%</span>`;}
         html+=`<tr><td class="metric-name">${md.label}${md.early?' <span style="font-size:8px;color:var(--ink4)">D8+</span>':''}</td>`;
@@ -760,6 +804,27 @@ function entMetrics(entKey,entId){
   const bench = accountBenchmark(benchWin.f,benchWin.t);
   const cacVsAcct = (bench.cac&&cacMatured)? (cacMatured-bench.cac)/bench.cac*100 : null;
   const cptVsAcct = (bench.cpt&&cptTill)? (cptTill-bench.cpt)/bench.cpt*100 : null;
+  // ── ADDITIONAL WINDOWS for the flat ledger (per the column spec) ──
+  // CPT L7 (last 7d) & W-1 (last-to-last 7d), D28-adjusted
+  const wkW1=aggRangeFor(isoBack(13),isoBack(7),entKey,entId);
+  const cptL7 = (wk.d0*EST.d28)? wk.cost/(wk.d0*EST.d28) : null;
+  const cptW1 = (wkW1.d0*EST.d28)? wkW1.cost/(wkW1.d0*EST.d28) : null;
+  // CAC windows — all matured (exclude last 8 days), D28-adjusted via projected autopays
+  const cac_w1 = (function(){const c=aggRangeFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);return ap?c.cost/ap:null;})();      // last-to-last 7d matured
+  const cac_15 = (function(){const c=aggRangeFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);return ap?c.cost/ap:null;})();     // last 15d excl last 8
+  const cac_30 = (function(){const c=aggRangeFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);return ap?c.cost/ap:null;})();     // last 30d excl last 8
+  // S→T% L7 & W-1
+  const s2tL7 = wk.signups? (wk.d0*EST.d28)/wk.signups*100 : null;
+  const s2tW1 = wkW1.signups? (wkW1.d0*EST.d28)/wkW1.signups*100 : null;
+  // Cost share L7 / W-1 (this entity's share of channel spend in window)
+  const chanL7=accountBenchmark(isoBack(6),anchor).cost, chanW1=accountBenchmark(isoBack(13),isoBack(7)).cost;
+  const csL7 = chanL7? wk.cost/chanL7*100 : null;
+  const csW1 = chanW1? wkW1.cost/chanW1*100 : null;
+  // DoD (last 3 days) — leading indicators only (CPT + cost), NOT CAC (autopay lag)
+  const dod=aggRangeFor(isoBack(2),anchor,entKey,entId), dodPrev=aggRangeFor(isoBack(5),isoBack(3),entKey,entId);
+  const cptDoD=(dod.d0*EST.d28)?dod.cost/(dod.d0*EST.d28):null;
+  const cptDoDPrev=(dodPrev.d0*EST.d28)?dodPrev.cost/(dodPrev.d0*EST.d28):null;
+  const costDoD=dod.cost/3, costDoDPrev=dodPrev.cost/3;
   // ── DECISION ──
   let flag='mod',verdict='watch',issues=[];
   const cptΔ=(cptTill!=null&&cptWeek!=null&&cptTill>0)?(cptWeek-cptTill)/cptTill*100:null;
@@ -796,7 +861,9 @@ function entMetrics(entKey,entId){
     cost:life.cost,trialsActual,trialsActualWk:arBase,maturedDaysOfHistory,decWindowLabel,
     cptTill,cptWeek,cptΔ,cacTill,cacWeekEst,arTill,arWeekEst,s2tTill,s2tWeek,
     arLadder,headlineAR,headlineARLabel,runDays:rd,drrLast7,drrPrev7,drrΔ,cacVsAcct,cptVsAcct,
-    acctCac:bench.cac,acctCpt:bench.cpt};
+    acctCac:bench.cac,acctCpt:bench.cpt,
+    cptL7,cptW1,cac_w1,cac_15,cac_30,s2tL7,s2tW1,csL7,csW1,
+    cptDoD,cptDoDPrev,costDoD,costDoDPrev};
 }
 const FLAG_RANK={red:0,green:1,mod:2};
 function flagDot(f){return `<span class="flag-dot flag-${f}"></span>`;}
@@ -812,129 +879,144 @@ function deltaArrow(till,week,higherWorse){
   const worse=higherWorse?d>0:d<0;
   return `<span class="cell-delta ${worse?'d-worse':'d-better'}">${d>0?'▲':'▼'}${Math.abs(d).toFixed(0)}%</span>`;}
 function issueCell(issues){return `<div class="cell issue-cell">${issues.slice(0,3).map(([t,txt])=>`<span class="issue-tag it-${t}">${txt}</span>`).join('')}</div>`;}
-function actRowHTML(m,level,name,ids,expandable,isOpen,rowKey){
-  const lb=!m.arTrust; // low base → grey AR/CAC
-  const lvlCls=level==='campaign'?'lvl-c':level==='adset'?'lvl-as':'lvl-ad';
-  const indent=level==='adset'?'ent-indent-as':level==='ad'?'ent-indent-ad':'';
-  const verdictTxt=m.verdict==='scale'?'<span class="verdict-cell vc-scale">▲ Scale</span>':m.verdict==='pause'?'<span class="verdict-cell vc-pause">■ Pause</span>':'<span class="verdict-cell vc-watch">● Watch</span>';
-  const drrArrow=m.drrΔ>=ACT.drrMoveThreshold?'<span class="cell-delta d-better">▲'+m.drrΔ.toFixed(0)+'%</span>':m.drrΔ<=-ACT.drrMoveThreshold?'<span class="cell-delta d-worse">▼'+Math.abs(m.drrΔ).toFixed(0)+'%</span>':'';
-  return `<tr class="act-row ${lvlCls} ${m.suppressed?'row-suppressed':''}" data-rowkey="${rowKey||''}">
-    <td class="ent-col"><div class="ent-cell ${indent}">
-      <span class="ent-caret ${expandable?(isOpen?'open':''):'leaf'}" ${expandable?`data-toggle="${rowKey}"`:''}>▶</span>
-      ${flagDot(m.flag)}
-      <div class="ent-meta"><div class="ent-nm" title="${name}">${name}${m.suppressed?' <span class="supp-tag" title="'+m.suppressReason+'">✓ actioned</span>':''}</div><div class="ent-id">${ids} · ${m.runDays}d run</div></div>
-    </div></td>
-    <td>${issueCell(m.issues)}</td>
+function issueCell(issues){return `<div class="cell issue-cell">${issues.slice(0,3).map(([t,txt])=>`<span class="issue-tag it-${t}">${txt}</span>`).join('')}</div>`;}
+// ═══════════════════════════════════════════════════════════
+// ACTIONABLES — Flat decision ledger, account-anchored, grain-filtered, running-only
+// ═══════════════════════════════════════════════════════════
+// actGrain lives in global state above
+// money but compact for DRR
+function moneyc(n){return(!n||isNaN(n))?'—':'₹'+Math.round(n).toLocaleString('en-IN');}
+function pctc(v){return(v==null||isNaN(v))?'—':v.toFixed(1)+'%';}
+function cacCell(v,lb,base){if(v==null||isNaN(v))return '<div class="cell">—</div>';const c=cls(v,T.cac.g,T.cac.a,0);if(lb)return `<div class="cell lowbase">${moneyc(v)}<span class="lowbase-tag">n${base}</span></div>`;return `<div class="cell val-${c}">${moneyc(v)}</div>`;}
+function cptCell(v){if(v==null||isNaN(v))return '<div class="cell">—</div>';return `<div class="cell val-${cls(v,T.cpt.g,T.cpt.a,0)}">${moneyc(v)}</div>`;}
+function deltaArrow(a,b,higherWorse){if(a==null||b==null||a===0||isNaN(a)||isNaN(b))return '';const d=(b-a)/a*100;if(Math.abs(d)<2)return '';const worse=higherWorse?d>0:d<0;return `<span class="cell-delta ${worse?'d-worse':'d-better'}">${d>0?'▲':'▼'}${Math.abs(d).toFixed(0)}%</span>`;}
+// identity columns for a row, adapting to grain & source
+function idCols(m){
+  const id=m.entId;
+  let campId,campNm,asId,asNm,adId,adNm,src;
+  if(m.entKey==='campaign'){campId=id;campNm=MAP_CAMP[id]?.s||id;asId='—';asNm='—';adId='—';adNm='—';src=MAP_CAMP[id]?.source||'facebook';}
+  else if(m.entKey==='adset'){asId=id;asNm=MAP_ASET[id]?.s||id;campId=MAP_ASET[id]?.c||'—';campNm=MAP_CAMP[campId]?.s||campId;adId='—';adNm='—';src=MAP_ASET[id]?.source||srcOf(id);}
+  else {adId=id;adNm=MAP_AD[id]?.s||id;asId=MAP_AD[id]?.as||'—';asNm=MAP_ASET[asId]?.s||asId;campId=adCamp(id)||'—';campNm=MAP_CAMP[campId]?.s||campId;src=srcOf(id);}
+  // Google has no ad level → force "—"
+  if(src==='google'){adId='—';adNm='—';}
+  return {campId,campNm,asId,asNm,adId,adNm,src};
+}
+function ledgerRow(m,isAcct){
+  const lb=!m.arTrust;
+  const c=isAcct?{campNm:'ACCOUNT BENCHMARK',campId:'',asNm:'—',asId:'',adNm:'—',adId:'',src:''}:idCols(m);
+  const verdictTxt = isAcct? '<span class="verdict-cell" style="color:var(--ink3)">baseline</span>' :
+    m.verdict==='scale'?'<span class="verdict-cell vc-scale">▲ Scale</span>':m.verdict==='pause'?'<span class="verdict-cell vc-pause">■ Pause</span>':'<span class="verdict-cell vc-watch">● Watch</span>';
+  const nm=(name,id)=>`<div class="ent-nm" title="${name}">${name}</div>${id?`<div class="ent-id">${id}</div>`:''}`;
+  const srcBadge=c.src?`<span class="src-pill src-${c.src}">${c.src==='google'?'G':'M'}</span>`:'';
+  return `<tr class="led-row ${isAcct?'led-acct':''} ${!isAcct&&m.flag?'flag-l-'+m.flag:''}">
+    <td class="led-id led-c-col">${srcBadge}${nm(c.campNm,c.campId)}</td>
+    <td class="led-id">${nm(c.asNm,c.asId)}</td>
+    <td class="led-id">${nm(c.adNm,c.adId)}</td>
     <td><div class="cell">${verdictTxt}</div></td>
-    <td><div class="cell" style="font-weight:700;">${money(m.cost)}</div></td>
-    <td class="act-grp-div"><div class="cell">${money(m.drrLast7)}${drrArrow}</div></td>
-    <td><div class="cell" style="color:var(--ink3);">${money(m.drrPrev7)}</div></td>
-    <td><div class="cell">${num(m.trialsActual)}</div></td>
-    <td class="act-grp-div">${vCell(m.cptTill,money,{th:[T.cpt.g,T.cpt.a,0]})}</td>
-    <td><div class="cell">${m.cptWeek!=null&&!isNaN(m.cptWeek)?money(m.cptWeek)+deltaArrow(m.cptTill,m.cptWeek,true):'—'}</div></td>
-    <td class="act-grp-div">${vCell(m.cacTill,money,{th:[T.cac.g,T.cac.a,0],lowbase:lb,base:m.trialsActual})}</td>
-    <td>${vCell(m.cacWeekEst,money,{th:[T.cac.g,T.cac.a,0],lowbase:lb,base:m.trialsActual})}</td>
-    <td class="act-grp-div">${vCell(m.s2tTill,pct,{th:[T.s2t.g,T.s2t.a,1]})}</td>
-    <td><div class="cell">${m.s2tWeek!=null&&!isNaN(m.s2tWeek)?pct(m.s2tWeek)+deltaArrow(m.s2tTill,m.s2tWeek,false):'—'}</div></td>
-    <td class="act-grp-div">${vCell(m.arTill,pct,{th:[T.apr.g,T.apr.a,1],lowbase:lb,base:m.trialsActual})}<div class="cell" style="padding-top:0;font-size:8px;color:var(--ink4);">${m.headlineARLabel}</div></td>
-    <td>${vCell(m.arWeekEst,pct,{th:[T.apr.g,T.apr.a,1],lowbase:lb,base:m.trialsActual})}</td>
-  </tr>`;}
+    <td class="led-issue">${isAcct?'<div class="cell" style="color:var(--ink4)">— account avg —</div>':issueCell(m.issues)}</td>
+    <td class="grp-div"><div class="cell">${m.csL7!=null?pctc(m.csL7):(isAcct?'100%':'—')}</div></td>
+    <td><div class="cell" style="color:var(--ink3)">${m.csW1!=null?pctc(m.csW1):(isAcct?'100%':'—')}</div></td>
+    <td class="grp-div"><div class="cell">${moneyc(m.drrLast7)}</div></td>
+    <td><div class="cell" style="color:var(--ink3)">${moneyc(m.drrPrev7)}</div></td>
+    <td class="grp-div">${cptCell(m.cptDoD)}</td>
+    <td>${cptCell(m.cptTill)}</td>
+    <td>${cptCell(m.cptL7)}${!isAcct?deltaArrow(m.cptTill,m.cptL7,true):''}</td>
+    <td>${cptCell(m.cptW1)}</td>
+    <td class="grp-div">${cacCell(m.cacTill,lb,m.trialsActual)}</td>
+    <td>${cacCell(m.cac_w1,lb,m.trialsActual)}</td>
+    <td>${cacCell(m.cac_15,lb,m.trialsActual)}</td>
+    <td>${cacCell(m.cac_30,lb,m.trialsActual)}</td>
+    <td class="grp-div"><div class="cell">${pctc(m.s2tTill)}</div></td>
+    <td><div class="cell">${pctc(m.s2tL7)}</div></td>
+    <td><div class="cell" style="color:var(--ink3)">${pctc(m.s2tW1)}</div></td>
+  </tr>`;
+}
+function ledgerHeader(){
+  return `<thead>
+    <tr class="led-grouphead">
+      <th class="led-c-col l" rowspan="2">Campaign</th>
+      <th class="l" rowspan="2">Ad Set</th>
+      <th class="l" rowspan="2">Ad</th>
+      <th rowspan="2">Decision</th>
+      <th class="l" rowspan="2">Issue</th>
+      <th class="grp-div" colspan="2">Cost Share</th>
+      <th class="grp-div" colspan="2">Daily Run Rate</th>
+      <th class="grp-div" colspan="1">DoD</th>
+      <th colspan="3">CPT (D28-adj)</th>
+      <th class="grp-div" colspan="4">CAC (matured, D28-adj)</th>
+      <th class="grp-div" colspan="3">Signup→Trial %</th>
+    </tr>
+    <tr class="led-subhead">
+      <th class="grp-div">L7</th><th>W-1</th>
+      <th class="grp-div">L7</th><th>W-1</th>
+      <th class="grp-div">L3d CPT</th>
+      <th>Till</th><th>L7</th><th>W-1</th>
+      <th class="grp-div">Till</th><th>W-1 (7d)</th><th>15d −8</th><th>30d −8</th>
+      <th class="grp-div">Till</th><th>L7</th><th>W-1</th>
+    </tr></thead>`;
+}
 function vActions(){
-  // gather metrics for all entities in scope
-  const camps=Object.keys(MAP_CAMP).filter(cid=>acct==='both'||MAP_CAMP[cid].acct===acct);
-  const campM=[];
-  camps.forEach(cid=>{const m=entMetrics('campaign',cid);if(m)campM.push({cid,m});});
-  // summary counts (entities needing immediate action = red, plus scale opportunities = green)
-  let cR=0,cG=0,cM=0,asR=0,asG=0,asM=0,adR=0,adG=0,adM=0,spendAtRisk=0,spendScale=0;
-  const asByCamp={},adByAset={};
-  campM.forEach(({cid,m})=>{
-    if(m.flag==='red'){cR++;spendAtRisk+=m.cost;}else if(m.flag==='green'){cG++;spendScale+=m.cost;}else cM++;
-    const asets=Object.keys(MAP_ASET).filter(aid=>MAP_ASET[aid].c===cid&&(acct==='both'||MAP_ASET[aid].acct===acct));
-    asByCamp[cid]=[];
-    asets.forEach(aid=>{const am=entMetrics('adset',aid);if(!am)return;asByCamp[cid].push({aid,m:am});
-      if(am.flag==='red')asR++;else if(am.flag==='green')asG++;else asM++;
-      const ads=Object.keys(MAP_AD).filter(adid=>MAP_AD[adid].as===aid&&(acct==='both'||MAP_AD[adid].acct===acct));
-      adByAset[aid]=[];
-      ads.forEach(adid=>{const dm=entMetrics('ad',adid);if(!dm)return;adByAset[aid].push({adid,m:dm});
-        if(dm.flag==='red')adR++;else if(dm.flag==='green')adG++;else adM++;});});
-  });
-  // ── SUMMARY CARDS ──
+  // collect entity metrics at the chosen grain, running-only
+  let ids=[];
+  if(actGrain==='campaign')ids=Object.keys(MAP_CAMP).filter(cid=>acct==='both'||MAP_CAMP[cid].acct===acct).map(id=>['campaign',id]);
+  else if(actGrain==='adset')ids=Object.keys(MAP_ASET).filter(aid=>acct==='both'||MAP_ASET[aid].acct===acct).map(id=>['adset',id]);
+  else ids=Object.keys(MAP_AD).filter(adid=>acct==='both'||MAP_AD[adid].acct===acct).map(id=>['ad',id]);
+  const all=[];
+  ids.forEach(([k,id])=>{const m=entMetrics(k,id);if(!m)return;
+    // RUNNING ONLY: must have spent in last `pausedWindow` days
+    if(m.isPaused)return;
+    all.push(m);});
+  // account benchmark row (anchored to current account scope, full eval window)
+  const matCut=isoBack(ACT.matureDays);
+  const acctRow=(function(){
+    const life=accountBenchmark('2000-01-01',anchor);
+    const b30=accountBenchmark(isoBack(ACT.matureDays+30),matCut),b15=accountBenchmark(isoBack(ACT.matureDays+15),matCut),bw1=accountBenchmark(isoBack(ACT.matureDays+7),matCut),ball=accountBenchmark('2000-01-01',matCut);
+    const l7=accountBenchmark(isoBack(6),anchor),w1=accountBenchmark(isoBack(13),isoBack(7));
+    const dod=accountBenchmark(isoBack(2),anchor);
+    return {entKey:'acct',arTrust:true,flag:'',verdict:'',issues:[],
+      cptTill:ball.cpt,cptL7:l7.cpt,cptW1:w1.cpt,cptDoD:dod.cpt,
+      cacTill:ball.cac,cac_w1:bw1.cac,cac_15:b15.cac,cac_30:b30.cac,
+      s2tTill:null,s2tL7:null,s2tW1:null,csL7:null,csW1:null,
+      drrLast7:l7.cost/7,drrPrev7:w1.cost/7,trialsActual:ball.trials28};
+  })();
+  // split by flag, spend-desc within each
+  const byFlag={red:[],green:[],mod:[]};
+  all.forEach(m=>byFlag[m.flag]?.push(m));
+  Object.keys(byFlag).forEach(f=>byFlag[f].sort((a,b)=>b.cost-a.cost));
+  // summary
+  const spendRisk=byFlag.red.reduce((a,m)=>a+m.drrLast7*7,0), spendScale=byFlag.green.reduce((a,m)=>a+m.drrLast7*7,0);
   let h=`<div class="act-summary">
-    <div class="sum-card red"><div class="sum-big">${cR+asR+adR}</div><div class="sum-label">Need Immediate Action</div><div class="sum-detail">${cR} campaigns · ${asR} ad sets · ${adR} ads<br>₹${Math.round(spendAtRisk).toLocaleString('en-IN')} spend at risk</div></div>
-    <div class="sum-card green"><div class="sum-big">${cG+asG+adG}</div><div class="sum-label">Scale Opportunities</div><div class="sum-detail">${cG} campaigns · ${asG} ad sets · ${adG} ads<br>proven back-end</div></div>
-    <div class="sum-card mod"><div class="sum-big">${cM+asM+adM}</div><div class="sum-label">Watch / Needs Data</div><div class="sum-detail">${cM} campaigns · ${asM} ad sets · ${adM} ads<br>building signal or thin base</div></div>
-    <div class="sum-card neutral"><div class="sum-big">${campM.length}</div><div class="sum-label">Active Campaigns</div><div class="sum-detail">${Object.values(asByCamp).flat().length} ad sets · ${Object.values(adByAset).flat().length} ads<br>in ${acct==='both'?'both accounts':acct+' account'}</div></div>
+    <div class="sum-card red"><div class="sum-big">${byFlag.red.length}</div><div class="sum-label">Pause — Action Needed</div><div class="sum-detail">${moneyc(spendRisk)}/wk run-rate at risk</div></div>
+    <div class="sum-card green"><div class="sum-big">${byFlag.green.length}</div><div class="sum-label">Scale Opportunities</div><div class="sum-detail">${moneyc(spendScale)}/wk proven, room to push</div></div>
+    <div class="sum-card mod"><div class="sum-big">${byFlag.mod.length}</div><div class="sum-label">Watch</div><div class="sum-detail">building signal / near account avg</div></div>
+    <div class="sum-card neutral"><div class="sum-big">${all.length}</div><div class="sum-label">Running ${actGrain}s</div><div class="sum-detail">${acct==='both'?'both accts':acct} · paused excluded</div></div>
   </div>`;
-  h+=`<div class="banner">⚡ Click a campaign row to expand its ad sets, then an ad set to expand its ads. <b>&nbsp;Flag:&nbsp;</b> 🟢 Scale · 🔴 Pause · 🟡 Watch. CAC & AR are <b>cohort-windowed & matured</b> (cohorts ≥${ACT.matureDays}d old); greyed with a <b>base</b> tag when matured trials &lt; ${ACT.minTrialsForAR}, so the flag falls back to CPT.</div>`;
-  // ── FILTER BAR ──
-  const suppCount=[...campM.map(x=>x.m),...Object.values(asByCamp).flat().map(x=>x.m),...Object.values(adByAset).flat().map(x=>x.m)].filter(m=>m&&m.suppressed&&(m.flag==='red'||m.flag==='green')).length;
-  h+=`<div class="act-filter-bar"><span class="ctrl-label">Show</span>
-    <div class="seg" id="actFilterSeg">
-      <button class="seg-btn ${actFilter==='action'?'on':''}" data-af="action">⚡ Action needed (Red+Green)</button>
-      <button class="seg-btn ${actFilter==='watch'?'on':''}" data-af="watch">+ Watch</button>
-      <button class="seg-btn ${actFilter==='paused'?'on':''}" data-af="paused">Paused only</button>
-      <button class="seg-btn ${actFilter==='all'?'on':''}" data-af="all">All</button>
+  // grain selector
+  h+=`<div class="act-filter-bar"><span class="ctrl-label">Grain</span>
+    <div class="seg" id="actGrainSeg">
+      <button class="seg-btn ${actGrain==='campaign'?'on':''}" data-grain="campaign">Campaign</button>
+      <button class="seg-btn ${actGrain==='adset'?'on':''}" data-grain="adset">Ad Set</button>
+      <button class="seg-btn ${actGrain==='ad'?'on':''}" data-grain="ad">Ad</button>
     </div>
-    <button class="btn-sm ${actShowActioned?'on':''}" id="showActionedBtn">${actShowActioned?'✓ ':''}Show already-actioned (${suppCount})</button>
-    <span style="font-size:10.5px;color:var(--ink4);margin-left:auto;">Suppressed = budget already moved in the recommended direction (last 7d vs W-1).</span>
+    <span style="font-size:10.5px;color:var(--ink4);margin-left:auto;">Flat rows at the chosen grain · running only · account = pinned row 0 · spend-desc within each flag. CAC windows all exclude the last ${ACT.matureDays} days (un-matured). DoD shows CPT only (autopay lag makes DoD CAC meaningless).</span>
   </div>`;
-  // does an entity-metrics object match the current filter?
-  function matchFilter(m){
-    if(!m)return false;
-    if(m.suppressed&&!actShowActioned)return false;  // #5 hide already-actioned unless toggled
-    if(actFilter==='all')return true;
-    if(actFilter==='action')return m.flag==='red'||m.flag==='green';
-    if(actFilter==='watch')return m.flag==='red'||m.flag==='green'||m.flag==='mod';
-    if(actFilter==='paused')return m.isPaused;
-    return true;
+  // render three flag tables
+  function flagTable(title,cls_,arr){
+    if(!arr.length)return `<div class="led-flag-head ${cls_}">${title} <span class="act-count">0</span></div><div class="dd-na" style="margin-bottom:18px;">None at ${actGrain} grain.</div>`;
+    let t=`<div class="led-flag-head ${cls_}">${title} <span class="act-count">${arr.length}</span></div>`;
+    t+=`<div class="act-tbl-wrap"><div class="act-tbl-scroll"><table class="act led">${ledgerHeader()}<tbody>`;
+    t+=ledgerRow(acctRow,true);
+    arr.forEach(m=>{t+=ledgerRow(m,false);});
+    t+=`</tbody></table></div></div>`;
+    return t;
   }
-  // ── TABLE ──
-  h+=`<div class="act-tbl-wrap"><div class="act-tbl-scroll"><table class="act"><thead><tr>
-    <th class="ent-col l">Campaign ▸ Ad Set ▸ Ad</th>
-    <th class="l">Issue</th>
-    <th class="l">Decision</th>
-    <th>Spend (Till)</th>
-    <th class="grp-div">DRR L7<br>(avg/day)</th>
-    <th>DRR W-1<br>(avg/day)</th>
-    <th>Trials<br>(matured)</th>
-    <th class="grp-div">CPT Till<br>(D28)</th>
-    <th>CPT Wk<br>(D28)</th>
-    <th class="grp-div">CAC Matured<br>(all cohorts)</th>
-    <th>CAC Decision<br>(2wk/1wk)</th>
-    <th class="grp-div">S→T% Till<br>(D28)</th>
-    <th>S→T% Wk<br>(D28)</th>
-    <th class="grp-div">AR% Matured<br>(all)</th>
-    <th>AR% Decision<br>(2wk/1wk)</th>
-  </tr></thead><tbody>`;
-  campM.sort((a,b)=>FLAG_RANK[a.m.flag]-FLAG_RANK[b.m.flag]||b.m.cost-a.m.cost);
-  let shownRows=0;
-  campM.forEach(({cid,m})=>{
-    const ckey='c-'+cid;const copen=actOpen[ckey];
-    const cname=MAP_CAMP[cid].s;const tag=MAP_CAMP[cid].t||MAP_CAMP[cid].acct;
-    const asets=(asByCamp[cid]||[]).slice().sort((a,b)=>FLAG_RANK[a.m.flag]-FLAG_RANK[b.m.flag]||b.m.cost-a.m.cost);
-    // does any descendant match?
-    const asetsMatching=asets.filter(({aid,m:am})=>matchFilter(am)||(adByAset[aid]||[]).some(({m:dm})=>matchFilter(dm)));
-    const campShows=matchFilter(m)||asetsMatching.length>0;
-    if(!campShows)return;
-    shownRows++;
-    h+=actRowHTML(m,'campaign',(tag?'['+tag.toUpperCase()+'] ':'')+cname,'Camp '+cid,asetsMatching.length>0,copen,ckey);
-    if(copen){
-      asetsMatching.forEach(({aid,m:am})=>{
-        const akey='as-'+aid;const aopen=actOpen[akey];
-        const ads=(adByAset[aid]||[]).slice().sort((a,b)=>FLAG_RANK[a.m.flag]-FLAG_RANK[b.m.flag]||b.m.cost-a.m.cost);
-        const adsMatching=ads.filter(({m:dm})=>matchFilter(dm));
-        h+=actRowHTML(am,'adset',MAP_ASET[aid].s,'AdSet '+aid,adsMatching.length>0,aopen,akey);
-        if(aopen){adsMatching.forEach(({adid,m:dm})=>{h+=actRowHTML(dm,'ad',MAP_AD[adid].s,'Ad '+adid,false,false,'ad-'+adid);});}
-      });
-    }
-  });
-  if(!shownRows)h+=`<tr><td colspan="15"><div class="empty-state" style="padding:40px;"><div class="empty-ic">✓</div><div>Nothing matches this filter.</div><div style="font-size:11px;margin-top:6px;color:var(--ink4);">No entities are flagged ${actFilter==='action'?'Red or Green':actFilter}. Try a broader filter.</div></div></td></tr>`;
-  h+=`</tbody></table></div></div>`;
-  return h;}
+  h+=flagTable('🔴 PAUSE','paused',byFlag.red);
+  h+=flagTable('🟢 SCALE','running',byFlag.green);
+  h+=flagTable('🟡 WATCH','mod',byFlag.mod);
+  return h;
+}
 function bindTree(){
-  $$('.ent-caret[data-toggle]').forEach(c=>c.onclick=ev=>{ev.stopPropagation();const k=c.dataset.toggle;actOpen[k]=!actOpen[k];render();});
-  const seg=$('#actFilterSeg');if(seg)seg.onclick=e=>{if(e.target.dataset.af){actFilter=e.target.dataset.af;render();}};
-  const sab=$('#showActionedBtn');if(sab)sab.onclick=()=>{actShowActioned=!actShowActioned;render();};
+  const gs=$('#actGrainSeg');if(gs)gs.onclick=e=>{if(e.target.dataset.grain){actGrain=e.target.dataset.grain;render();}};
 }
 function rebuildFilters(){const fc=$('#fCampaign'),fa=$('#fAdset'),fd=$('#fAd');
   fc.innerHTML='<option value="all">All Campaigns</option>';Object.keys(MAP_CAMP).filter(id=>acct==='both'||MAP_CAMP[id].acct===acct).forEach(id=>{const o=document.createElement('option');o.value=id;o.textContent=MAP_CAMP[id].s;if(id===fCamp)o.selected=true;fc.appendChild(o);});
