@@ -234,6 +234,12 @@ table.act.led{font-size:10px;}
 .src-pill{display:inline-block;font-size:8px;font-weight:800;width:14px;height:14px;line-height:14px;text-align:center;border-radius:4px;margin-right:5px;vertical-align:middle;}
 .src-facebook{background:var(--brandbg);color:var(--brand);}
 .src-google{background:#e8f0e8;color:#3a7d3a;}
+.term-legend{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-bottom:16px;padding:0;overflow:hidden;}
+.term-legend summary{padding:11px 15px;font-size:11.5px;font-weight:700;color:var(--brand);cursor:pointer;list-style:none;user-select:none;}
+.term-legend summary::-webkit-details-marker{display:none;}
+.term-legend summary:hover{background:var(--panel2);}
+.term-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px 18px;padding:6px 16px 16px;font-size:11px;color:var(--ink2);line-height:1.5;}
+.term-grid b{color:var(--ink);font-family:var(--m);font-size:10.5px;}
 ::-webkit-scrollbar{width:8px;height:8px;}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:10px;}::-webkit-scrollbar-track{background:var(--panel2);}
 .hide{display:none!important;}
 @media(max-width:900px){.side{display:none;}.dd-grid{grid-template-columns:1fr;}}
@@ -416,6 +422,7 @@ const ACT={
   minTrialsForAR:50,    // min ACTUAL trials before AR%/CAC is trusted to drive a decision
   benchMargin:15,       // #3 entity must be >this% worse than account CPT/CAC to flag Pause
   drrMoveThreshold:15,  // #5 a ±this% DRR shift counts as 'already actioned' suppression
+  funnelMinDev:15,      // #4 a funnel link must deviate ≥this% (vs acct or own W-1) to be named a driver
 };
 // Entity maps — built from mapping CSV upload + Meta seed
 let MAP_CAMP={
@@ -435,7 +442,8 @@ let MAP_AD={};
 Object.keys(META_AD).forEach(id=>{const m=META_AD[id];MAP_AD[id]={s:m.s,as:m.as,c:m.c,acct:'new'};});
 let ALL_ROWS=[];
 let view='campaign',gran='dod',numCols=7,anchor='2026-06-18',search='',fCamp='all',fAset='all',fAd='all',acct='new';
-let openEnts={},collapsedGroups={},treeOpen={},actOpen={},actFilter='action',actShowActioned=false,actGrain='adset';
+let dataMaxDate='2026-06-18'; // latest date in loaded data; Actionables always anchors here regardless of date picker
+let openEnts={},collapsedGroups={},treeOpen={},actOpen={},actFilter='action',actShowActioned=false,actGrain='adset',actEntFilter='';
 const $=s=>document.querySelector(s);const $$=s=>document.querySelectorAll(s);
 function adCamp(id){return MAP_AD[id]?.c||'';}
 function adAset(id){return MAP_AD[id]?.as||'';}
@@ -804,27 +812,83 @@ function entMetrics(entKey,entId){
   const bench = accountBenchmark(benchWin.f,benchWin.t);
   const cacVsAcct = (bench.cac&&cacMatured)? (cacMatured-bench.cac)/bench.cac*100 : null;
   const cptVsAcct = (bench.cpt&&cptTill)? (cptTill-bench.cpt)/bench.cpt*100 : null;
-  // ── ADDITIONAL WINDOWS for the flat ledger (per the column spec) ──
-  // CPT L7 (last 7d) & W-1 (last-to-last 7d), D28-adjusted
+  // ── ADDITIONAL WINDOWS for the flat ledger ──
+  // helper: D28-adjusted CPT for a window agg
+  const cptOf=a=>(a.d0*EST.d28)?a.cost/(a.d0*EST.d28):null;
+  const s2tOf=a=>a.signups?(a.d0*EST.d28)/a.signups*100:null;
+  // weekly windows
   const wkW1=aggRangeFor(isoBack(13),isoBack(7),entKey,entId);
-  const cptL7 = (wk.d0*EST.d28)? wk.cost/(wk.d0*EST.d28) : null;
-  const cptW1 = (wkW1.d0*EST.d28)? wkW1.cost/(wkW1.d0*EST.d28) : null;
+  const wkW2=aggRangeFor(isoBack(20),isoBack(14),entKey,entId);
+  const cptL7=cptOf(wk), cptW1=cptOf(wkW1), cptW2=cptOf(wkW2);
+  const s2tL7=s2tOf(wk), s2tW1=s2tOf(wkW1), s2tW2=s2tOf(wkW2);
+  // daily windows D-1 / D-2 / D-3 (#3: discrete, not averaged)
+  const d1=aggRangeFor(isoBack(0),isoBack(0),entKey,entId), d2=aggRangeFor(isoBack(1),isoBack(1),entKey,entId), d3=aggRangeFor(isoBack(2),isoBack(2),entKey,entId);
+  const cptD1=cptOf(d1),cptD2=cptOf(d2),cptD3=cptOf(d3);
+  const s2tD1=s2tOf(d1),s2tD2=s2tOf(d2),s2tD3=s2tOf(d3);
+  const costD1=d1.cost,costD2=d2.cost,costD3=d3.cost;
   // CAC windows — all matured (exclude last 8 days), D28-adjusted via projected autopays
-  const cac_w1 = (function(){const c=aggRangeFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);return ap?c.cost/ap:null;})();      // last-to-last 7d matured
-  const cac_15 = (function(){const c=aggRangeFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);return ap?c.cost/ap:null;})();     // last 15d excl last 8
-  const cac_30 = (function(){const c=aggRangeFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);return ap?c.cost/ap:null;})();     // last 30d excl last 8
-  // S→T% L7 & W-1
-  const s2tL7 = wk.signups? (wk.d0*EST.d28)/wk.signups*100 : null;
-  const s2tW1 = wkW1.signups? (wkW1.d0*EST.d28)/wkW1.signups*100 : null;
-  // Cost share L7 / W-1 (this entity's share of channel spend in window)
-  const chanL7=accountBenchmark(isoBack(6),anchor).cost, chanW1=accountBenchmark(isoBack(13),isoBack(7)).cost;
-  const csL7 = chanL7? wk.cost/chanL7*100 : null;
-  const csW1 = chanW1? wkW1.cost/chanW1*100 : null;
-  // DoD (last 3 days) — leading indicators only (CPT + cost), NOT CAC (autopay lag)
-  const dod=aggRangeFor(isoBack(2),anchor,entKey,entId), dodPrev=aggRangeFor(isoBack(5),isoBack(3),entKey,entId);
-  const cptDoD=(dod.d0*EST.d28)?dod.cost/(dod.d0*EST.d28):null;
-  const cptDoDPrev=(dodPrev.d0*EST.d28)?dodPrev.cost/(dodPrev.d0*EST.d28):null;
-  const costDoD=dod.cost/3, costDoDPrev=dodPrev.cost/3;
+  const cac_w1=(function(){const c=aggRangeFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);return ap?c.cost/ap:null;})();
+  const cac_15=(function(){const c=aggRangeFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);return ap?c.cost/ap:null;})();
+  const cac_30=(function(){const c=aggRangeFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);return ap?c.cost/ap:null;})();
+  // Cost share — Till / L7 / W-1 / W-2 (share of channel spend in each window)
+  const chanAll=accountBenchmark('2000-01-01',anchor).cost, chanL7=accountBenchmark(isoBack(6),anchor).cost, chanW1=accountBenchmark(isoBack(13),isoBack(7)).cost, chanW2=accountBenchmark(isoBack(20),isoBack(14)).cost;
+  const csTill=chanAll?life.cost/chanAll*100:null, csL7=chanL7?wk.cost/chanL7*100:null, csW1=chanW1?wkW1.cost/chanW1*100:null, csW2=chanW2?wkW2.cost/chanW2*100:null;
+  // DRR — L7 / W-1 / W-2 / D-1..D-3
+  const drrW2=drr(entKey,entId,20,14);
+  // ── #4 FUNNEL DECOMPOSITION DIAGNOSIS ──
+  // rates for current (L7) and baselines (own W-1, account L7)
+  function rates(a){return {
+    cpm:a.impressions?a.cost/a.impressions*1000:null,
+    ctr:a.impressions?a.clicks/a.impressions*100:null,
+    c2i:a.clicks?a.installs/a.clicks*100:null,
+    i2s:a.installs?a.signups/a.installs*100:null,
+    s2t:a.signups?a.d0/a.signups*100:null };}
+  const rCur=rates(wk), rOwn=rates(wkW1);
+  const acctWk=(function(){const rs=ALL_ROWS.filter(r=>r.date>=isoBack(6)&&r.date<=anchor&&inAcctFilter(r.ad_id));const s={impressions:0,clicks:0,installs:0,signups:0,d0:0,cost:0};rs.forEach(r=>{for(let k in s)s[k]+=r[k]||0;});return rates(s);})();
+  // for each funnel link, compute deviation vs account and vs own W-1; pick worse
+  // higher-worse for cpm; lower-worse for ctr/c2i/i2s/s2t
+  const funnel=[
+    {k:'cpm',label:'CPM',hiWorse:true,act:'media/bid/audience'},
+    {k:'ctr',label:'CTR',hiWorse:false,act:'creative refresh'},
+    {k:'c2i',label:'Click→Install',hiWorse:false,act:'store page / tracking'},
+    {k:'i2s',label:'Install→Signup',hiWorse:false,act:'onboarding'},
+    {k:'s2t',label:'Signup→Trial',hiWorse:false,act:'paywall/activation'},
+  ];
+  const drivers=[];
+  funnel.forEach(f=>{
+    const cur=rCur[f.k]; if(cur==null)return;
+    const acctV=acctWk[f.k], ownV=rOwn[f.k];
+    let devAcct=null,devOwn=null;
+    if(acctV&&acctV>0)devAcct=(cur-acctV)/acctV*100;
+    if(ownV&&ownV>0)devOwn=(cur-ownV)/ownV*100;
+    // a "bad" deviation: for hiWorse, positive; for lowWorse, negative
+    const badAcct = f.hiWorse? (devAcct!=null&&devAcct>0?devAcct:null) : (devAcct!=null&&devAcct<0?-devAcct:null);
+    const badOwn  = f.hiWorse? (devOwn!=null&&devOwn>0?devOwn:null)  : (devOwn!=null&&devOwn<0?-devOwn:null);
+    const worst=Math.max(badAcct||0,badOwn||0);
+    if(worst>=ACT.funnelMinDev){
+      const vsWhat = (badOwn||0)>(badAcct||0)? 'vs W-1' : 'vs acct';
+      const dir = f.hiWorse?'↑':'↓';
+      drivers.push({label:f.label,dir,mag:Math.round(worst),vsWhat,act:f.act,score:worst});
+    }
+  });
+  drivers.sort((a,b)=>b.score-a.score);
+  const topDrivers=drivers.slice(0,2);
+  // build a human diagnosis string
+  function diagnosis(){
+    if(!topDrivers.length)return null;
+    const parts=topDrivers.map(d=>`${d.label} ${d.dir}${d.mag}% ${d.vsWhat}`);
+    // interpretation: where in the funnel
+    const keys=topDrivers.map(d=>d.label);
+    let interp='';
+    if(keys.includes('CPM')&&keys.includes('CTR'))interp=' — creative fatigue (cost up, engagement down)';
+    else if(keys.includes('CPM'))interp=' — auction/audience pressure (media cost)';
+    else if(keys.includes('CTR'))interp=' — weak creative hook';
+    else if(keys.includes('Signup→Trial'))interp=' — activation/paywall, not media';
+    else if(keys.includes('Install→Signup'))interp=' — onboarding friction, not media';
+    else if(keys.includes('Click→Install'))interp=' — store/landing drop-off';
+    return parts.join(' · ')+interp;
+  }
+  const funnelDiag=diagnosis();
   // ── DECISION ──
   let flag='mod',verdict='watch',issues=[];
   const cptΔ=(cptTill!=null&&cptWeek!=null&&cptTill>0)?(cptWeek-cptTill)/cptTill*100:null;
@@ -847,57 +911,42 @@ function entMetrics(entKey,entId){
     else if(life.cost>300&&life.trials===0){flag='red';verdict='pause';issues.push(['red','₹'+Math.round(life.cost)+' spent, 0 trials']);}
     else {flag='mod';verdict='watch';issues.push(['mod','Building signal — '+arBase+' matured trials']);}
   }
-  // ── #5 already-actioned suppression ──
-  // if recent DRR already moved in the direction the verdict implies, suppress
+  // ── #5 already-actioned suppression (kept internal; ledger shows DRR directly) ──
   let suppressed=false,suppressReason='';
-  if(verdict==='scale' && drrΔ>=ACT.drrMoveThreshold){suppressed=true;suppressReason='Budget already ↑'+drrΔ.toFixed(0)+'% last 7d vs W-1 — scale acted on';}
-  else if(verdict==='pause' && (drrΔ<=-ACT.drrMoveThreshold||isPaused)){suppressed=true;suppressReason='Budget already ↓'+Math.abs(drrΔ).toFixed(0)+'% last 7d vs W-1 — cut acted on';}
+  if(verdict==='scale' && drrΔ>=ACT.drrMoveThreshold){suppressed=true;suppressReason='Budget already ↑'+drrΔ.toFixed(0)+'% L7 vs W-1';}
+  else if(verdict==='pause' && (drrΔ<=-ACT.drrMoveThreshold||isPaused)){suppressed=true;suppressReason='Budget already ↓ L7 vs W-1';}
+  // ── #4 ISSUE COLUMN: funnel-decomposition diagnosis (replaces generic CPT-high tag) ──
+  // Keep the headline verdict reason as issues[0]; append the funnel diagnosis as the actionable cause.
+  if(funnelDiag){
+    const sev = (flag==='red')?'red':(flag==='green'?'green':'mod');
+    issues.push([sev, funnelDiag]);
+  }
+  // CPT trend direction as a quick secondary signal
   if(cptΔ!=null&&cptΔ>15)issues.push(['red','CPT ↑'+cptΔ.toFixed(0)+'% WoW']);
   else if(cptΔ!=null&&cptΔ<-15)issues.push(['green','CPT ↓'+Math.abs(cptΔ).toFixed(0)+'% WoW']);
-  if(s2tTill!=null&&s2tWeek!=null&&s2tTill>0&&(s2tWeek-s2tTill)/s2tTill*100<-20)issues.push(['mod','Signup→Trial dropping']);
-  const cpmTill=life.impressions?life.cost/life.impressions*1000:null,cpmWeek=wk.impressions?wk.cost/wk.impressions*1000:null;
-  if(cpmTill!=null&&cpmWeek!=null&&cpmTill>0&&(cpmWeek-cpmTill)/cpmTill*100>25)issues.push(['mod','CPM ↑']);
   return {entKey,entId,isPaused,matured,arTrust,flag,verdict,issues,suppressed,suppressReason,
     cost:life.cost,trialsActual,trialsActualWk:arBase,maturedDaysOfHistory,decWindowLabel,
     cptTill,cptWeek,cptΔ,cacTill,cacWeekEst,arTill,arWeekEst,s2tTill,s2tWeek,
-    arLadder,headlineAR,headlineARLabel,runDays:rd,drrLast7,drrPrev7,drrΔ,cacVsAcct,cptVsAcct,
+    arLadder,headlineAR,headlineARLabel,runDays:rd,drrLast7,drrPrev7,drrW2,drrΔ,cacVsAcct,cptVsAcct,
     acctCac:bench.cac,acctCpt:bench.cpt,
-    cptL7,cptW1,cac_w1,cac_15,cac_30,s2tL7,s2tW1,csL7,csW1,
-    cptDoD,cptDoDPrev,costDoD,costDoDPrev};
+    cptL7,cptW1,cptW2,cac_w1,cac_15,cac_30,s2tL7,s2tW1,s2tW2,csTill,csL7,csW1,csW2,
+    cptD1,cptD2,cptD3,s2tD1,s2tD2,s2tD3,costD1,costD2,costD3,
+    funnelDiag,topDrivers};
 }
 const FLAG_RANK={red:0,green:1,mod:2};
-function flagDot(f){return `<span class="flag-dot flag-${f}"></span>`;}
-function vCell(v,fmt,opts){opts=opts||{};
-  if(v==null||isNaN(v))return `<div class="cell">—</div>`;
-  let disp=fmt(v);let cls_='';
-  if(opts.th){const c=cls(v,opts.th[0],opts.th[1],opts.th[2]);cls_='val-'+c;}
-  if(opts.lowbase)return `<div class="cell lowbase">${disp}<span class="lowbase-tag">base ${opts.base}</span></div>`;
-  return `<div class="cell ${cls_}">${disp}</div>`;}
-function deltaArrow(till,week,higherWorse){
-  if(till==null||week==null||till===0||isNaN(till)||isNaN(week))return '';
-  const d=(week-till)/till*100;if(Math.abs(d)<2)return '';
-  const worse=higherWorse?d>0:d<0;
-  return `<span class="cell-delta ${worse?'d-worse':'d-better'}">${d>0?'▲':'▼'}${Math.abs(d).toFixed(0)}%</span>`;}
-function issueCell(issues){return `<div class="cell issue-cell">${issues.slice(0,3).map(([t,txt])=>`<span class="issue-tag it-${t}">${txt}</span>`).join('')}</div>`;}
-function issueCell(issues){return `<div class="cell issue-cell">${issues.slice(0,3).map(([t,txt])=>`<span class="issue-tag it-${t}">${txt}</span>`).join('')}</div>`;}
-// ═══════════════════════════════════════════════════════════
-// ACTIONABLES — Flat decision ledger, account-anchored, grain-filtered, running-only
-// ═══════════════════════════════════════════════════════════
-// actGrain lives in global state above
-// money but compact for DRR
 function moneyc(n){return(!n||isNaN(n))?'—':'₹'+Math.round(n).toLocaleString('en-IN');}
 function pctc(v){return(v==null||isNaN(v))?'—':v.toFixed(1)+'%';}
-function cacCell(v,lb,base){if(v==null||isNaN(v))return '<div class="cell">—</div>';const c=cls(v,T.cac.g,T.cac.a,0);if(lb)return `<div class="cell lowbase">${moneyc(v)}<span class="lowbase-tag">n${base}</span></div>`;return `<div class="cell val-${c}">${moneyc(v)}</div>`;}
+function cls_cpt(v){return cls(v,T.cpt.g,T.cpt.a,0);}
+function cacCell(v,lb,base){if(v==null||isNaN(v))return '<div class="cell">—</div>';if(lb)return `<div class="cell lowbase">${moneyc(v)}<span class="lowbase-tag">n${base}</span></div>`;return `<div class="cell val-${cls(v,T.cac.g,T.cac.a,0)}">${moneyc(v)}</div>`;}
 function cptCell(v){if(v==null||isNaN(v))return '<div class="cell">—</div>';return `<div class="cell val-${cls(v,T.cpt.g,T.cpt.a,0)}">${moneyc(v)}</div>`;}
-function deltaArrow(a,b,higherWorse){if(a==null||b==null||a===0||isNaN(a)||isNaN(b))return '';const d=(b-a)/a*100;if(Math.abs(d)<2)return '';const worse=higherWorse?d>0:d<0;return `<span class="cell-delta ${worse?'d-worse':'d-better'}">${d>0?'▲':'▼'}${Math.abs(d).toFixed(0)}%</span>`;}
-// identity columns for a row, adapting to grain & source
+function s2tCell(v){if(v==null||isNaN(v))return '<div class="cell">—</div>';return `<div class="cell val-${cls(v,T.s2t.g,T.s2t.a,1)}">${pctc(v)}</div>`;}
+function issueCell(issues){if(!issues||!issues.length)return '<div class="cell issue-cell">—</div>';return `<div class="cell issue-cell">${issues.slice(0,3).map(([t,txt])=>`<span class="issue-tag it-${t}">${txt}</span>`).join('')}</div>`;}
+// identity columns adapting to grain & source
 function idCols(m){
-  const id=m.entId;
-  let campId,campNm,asId,asNm,adId,adNm,src;
+  const id=m.entId;let campId,campNm,asId,asNm,adId,adNm,src;
   if(m.entKey==='campaign'){campId=id;campNm=MAP_CAMP[id]?.s||id;asId='—';asNm='—';adId='—';adNm='—';src=MAP_CAMP[id]?.source||'facebook';}
   else if(m.entKey==='adset'){asId=id;asNm=MAP_ASET[id]?.s||id;campId=MAP_ASET[id]?.c||'—';campNm=MAP_CAMP[campId]?.s||campId;adId='—';adNm='—';src=MAP_ASET[id]?.source||srcOf(id);}
   else {adId=id;adNm=MAP_AD[id]?.s||id;asId=MAP_AD[id]?.as||'—';asNm=MAP_ASET[asId]?.s||asId;campId=adCamp(id)||'—';campNm=MAP_CAMP[campId]?.s||campId;src=srcOf(id);}
-  // Google has no ad level → force "—"
   if(src==='google'){adId='—';adNm='—';}
   return {campId,campNm,asId,asNm,adId,adNm,src};
 }
@@ -908,27 +957,38 @@ function ledgerRow(m,isAcct){
     m.verdict==='scale'?'<span class="verdict-cell vc-scale">▲ Scale</span>':m.verdict==='pause'?'<span class="verdict-cell vc-pause">■ Pause</span>':'<span class="verdict-cell vc-watch">● Watch</span>';
   const nm=(name,id)=>`<div class="ent-nm" title="${name}">${name}</div>${id?`<div class="ent-id">${id}</div>`:''}`;
   const srcBadge=c.src?`<span class="src-pill src-${c.src}">${c.src==='google'?'G':'M'}</span>`:'';
+  const dim='style="color:var(--ink3)"';
   return `<tr class="led-row ${isAcct?'led-acct':''} ${!isAcct&&m.flag?'flag-l-'+m.flag:''}">
     <td class="led-id led-c-col">${srcBadge}${nm(c.campNm,c.campId)}</td>
     <td class="led-id">${nm(c.asNm,c.asId)}</td>
     <td class="led-id">${nm(c.adNm,c.adId)}</td>
     <td><div class="cell">${verdictTxt}</div></td>
     <td class="led-issue">${isAcct?'<div class="cell" style="color:var(--ink4)">— account avg —</div>':issueCell(m.issues)}</td>
-    <td class="grp-div"><div class="cell">${m.csL7!=null?pctc(m.csL7):(isAcct?'100%':'—')}</div></td>
-    <td><div class="cell" style="color:var(--ink3)">${m.csW1!=null?pctc(m.csW1):(isAcct?'100%':'—')}</div></td>
+    <td class="grp-div"><div class="cell">${pctc(m.csTill)}</div></td>
+    <td><div class="cell">${pctc(m.csL7)}</div></td>
+    <td><div class="cell" ${dim}>${pctc(m.csW1)}</div></td>
+    <td><div class="cell" ${dim}>${pctc(m.csW2)}</div></td>
     <td class="grp-div"><div class="cell">${moneyc(m.drrLast7)}</div></td>
-    <td><div class="cell" style="color:var(--ink3)">${moneyc(m.drrPrev7)}</div></td>
-    <td class="grp-div">${cptCell(m.cptDoD)}</td>
-    <td>${cptCell(m.cptTill)}</td>
-    <td>${cptCell(m.cptL7)}${!isAcct?deltaArrow(m.cptTill,m.cptL7,true):''}</td>
+    <td><div class="cell" ${dim}>${moneyc(m.drrPrev7)}</div></td>
+    <td><div class="cell" ${dim}>${moneyc(m.drrW2)}</div></td>
+    <td class="grp-div">${cptCell(m.cptD1)}</td>
+    <td>${cptCell(m.cptD2)}</td>
+    <td>${cptCell(m.cptD3)}</td>
+    <td class="grp-div">${cptCell(m.cptTill)}</td>
+    <td>${cptCell(m.cptL7)}</td>
     <td>${cptCell(m.cptW1)}</td>
+    <td>${cptCell(m.cptW2)}</td>
     <td class="grp-div">${cacCell(m.cacTill,lb,m.trialsActual)}</td>
     <td>${cacCell(m.cac_w1,lb,m.trialsActual)}</td>
     <td>${cacCell(m.cac_15,lb,m.trialsActual)}</td>
     <td>${cacCell(m.cac_30,lb,m.trialsActual)}</td>
-    <td class="grp-div"><div class="cell">${pctc(m.s2tTill)}</div></td>
-    <td><div class="cell">${pctc(m.s2tL7)}</div></td>
-    <td><div class="cell" style="color:var(--ink3)">${pctc(m.s2tW1)}</div></td>
+    <td class="grp-div">${s2tCell(m.s2tD1)}</td>
+    <td>${s2tCell(m.s2tD2)}</td>
+    <td>${s2tCell(m.s2tD3)}</td>
+    <td class="grp-div">${s2tCell(m.s2tTill)}</td>
+    <td>${s2tCell(m.s2tL7)}</td>
+    <td>${s2tCell(m.s2tW1)}</td>
+    <td>${s2tCell(m.s2tW2)}</td>
   </tr>`;
 }
 function ledgerHeader(){
@@ -938,71 +998,99 @@ function ledgerHeader(){
       <th class="l" rowspan="2">Ad Set</th>
       <th class="l" rowspan="2">Ad</th>
       <th rowspan="2">Decision</th>
-      <th class="l" rowspan="2">Issue</th>
-      <th class="grp-div" colspan="2">Cost Share</th>
-      <th class="grp-div" colspan="2">Daily Run Rate</th>
-      <th class="grp-div" colspan="1">DoD</th>
-      <th colspan="3">CPT (D28-adj)</th>
+      <th class="l" rowspan="2">Issue (root-cause)</th>
+      <th class="grp-div" colspan="4">Cost Share %</th>
+      <th class="grp-div" colspan="3">Daily Run Rate (₹/day)</th>
+      <th class="grp-div" colspan="3">CPT Daily (D28-adj)</th>
+      <th class="grp-div" colspan="4">CPT Windows (D28-adj)</th>
       <th class="grp-div" colspan="4">CAC (matured, D28-adj)</th>
-      <th class="grp-div" colspan="3">Signup→Trial %</th>
+      <th class="grp-div" colspan="3">Signup→Trial % Daily</th>
+      <th class="grp-div" colspan="4">Signup→Trial % Windows</th>
     </tr>
     <tr class="led-subhead">
-      <th class="grp-div">L7</th><th>W-1</th>
-      <th class="grp-div">L7</th><th>W-1</th>
-      <th class="grp-div">L3d CPT</th>
-      <th>Till</th><th>L7</th><th>W-1</th>
-      <th class="grp-div">Till</th><th>W-1 (7d)</th><th>15d −8</th><th>30d −8</th>
-      <th class="grp-div">Till</th><th>L7</th><th>W-1</th>
+      <th class="grp-div">Till</th><th>L7</th><th>W-1</th><th>W-2</th>
+      <th class="grp-div">L7</th><th>W-1</th><th>W-2</th>
+      <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
+      <th class="grp-div">Till</th><th>L7</th><th>W-1</th><th>W-2</th>
+      <th class="grp-div">Till</th><th>W-1(7d)</th><th>15d−8</th><th>30d−8</th>
+      <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
+      <th class="grp-div">Till</th><th>L7</th><th>W-1</th><th>W-2</th>
     </tr></thead>`;
 }
+function terminologyLegend(){
+  return `<details class="term-legend"><summary>📖 What do these column terms mean? (click to expand)</summary>
+    <div class="term-grid">
+      <div><b>Till</b> — entire history to the latest data date (lifetime).</div>
+      <div><b>L7</b> — Last 7 days (most recent 7 days of data).</div>
+      <div><b>W-1</b> — the 7 days <i>before</i> L7 (days 8–14 ago). Last-to-last week.</div>
+      <div><b>W-2</b> — the 7 days before W-1 (days 15–21 ago).</div>
+      <div><b>D-1 / D-2 / D-3</b> — the single most recent day, the day before, and the day before that.</div>
+      <div><b>15d−8</b> — a 15-day window that <i>excludes</i> the last 8 days. Used for CAC because autopays only land ~Day 8, so the last 8 days haven't matured yet.</div>
+      <div><b>30d−8</b> — same idea, a 30-day window excluding the un-matured last 8 days.</div>
+      <div><b>CAC matured</b> — Customer Acquisition Cost using only cohorts old enough for autopay to have developed; un-matured tail is projected via the autopay curve.</div>
+      <div><b>D28-adj</b> — trials/CPT scaled to estimated Day-28 cohort (D0 × 1.17) so early days are comparable to mature ones.</div>
+      <div><b>Cost Share</b> — this entity's spend as a % of the whole channel's spend in that window (how much of the budget it carries).</div>
+      <div><b>DRR</b> — Daily Run Rate: average ₹ spent per day in the window.</div>
+      <div><b>Issue (root-cause)</b> — the funnel link(s) most responsible for the problem: CPM (media cost), CTR (creative), Click→Install (store), Install→Signup (onboarding), Signup→Trial (paywall). Judged vs account avg <i>and</i> vs the entity's own W-1.</div>
+    </div></details>`;
+}
 function vActions(){
-  // collect entity metrics at the chosen grain, running-only
+  // #1 LOCK: Actionables always evaluate against the latest available data date,
+  // independent of the matrix date picker. Pin anchor → dataMaxDate, restore on exit.
+  const _savedAnchor=anchor; anchor=dataMaxDate;
+  try{ return vActionsInner(); } finally { anchor=_savedAnchor; }
+}
+function vActionsInner(){
   let ids=[];
   if(actGrain==='campaign')ids=Object.keys(MAP_CAMP).filter(cid=>acct==='both'||MAP_CAMP[cid].acct===acct).map(id=>['campaign',id]);
   else if(actGrain==='adset')ids=Object.keys(MAP_ASET).filter(aid=>acct==='both'||MAP_ASET[aid].acct===acct).map(id=>['adset',id]);
   else ids=Object.keys(MAP_AD).filter(adid=>acct==='both'||MAP_AD[adid].acct===acct).map(id=>['ad',id]);
+  // apply entity search filter (name or ID, any level)
+  const q=(actEntFilter||'').trim().toLowerCase();
   const all=[];
-  ids.forEach(([k,id])=>{const m=entMetrics(k,id);if(!m)return;
-    // RUNNING ONLY: must have spent in last `pausedWindow` days
-    if(m.isPaused)return;
-    all.push(m);});
-  // account benchmark row (anchored to current account scope, full eval window)
+  ids.forEach(([k,id])=>{
+    if(q){const c=idColsLite(k,id);const hay=(c.campNm+' '+c.campId+' '+c.asNm+' '+c.asId+' '+c.adNm+' '+id).toLowerCase();if(!hay.includes(q))return;}
+    const m=entMetrics(k,id);if(!m)return;
+    if(m.isPaused)return; // running only
+    all.push(m);
+  });
   const matCut=isoBack(ACT.matureDays);
   const acctRow=(function(){
-    const life=accountBenchmark('2000-01-01',anchor);
-    const b30=accountBenchmark(isoBack(ACT.matureDays+30),matCut),b15=accountBenchmark(isoBack(ACT.matureDays+15),matCut),bw1=accountBenchmark(isoBack(ACT.matureDays+7),matCut),ball=accountBenchmark('2000-01-01',matCut);
-    const l7=accountBenchmark(isoBack(6),anchor),w1=accountBenchmark(isoBack(13),isoBack(7));
-    const dod=accountBenchmark(isoBack(2),anchor);
+    const ball=accountBenchmark('2000-01-01',matCut),b30=accountBenchmark(isoBack(ACT.matureDays+30),matCut),b15=accountBenchmark(isoBack(ACT.matureDays+15),matCut),bw1=accountBenchmark(isoBack(ACT.matureDays+7),matCut);
+    const lifeAll=accountBenchmark('2000-01-01',anchor),l7=accountBenchmark(isoBack(6),anchor),w1=accountBenchmark(isoBack(13),isoBack(7)),w2=accountBenchmark(isoBack(20),isoBack(14));
+    const d1=accountBenchmark(isoBack(0),isoBack(0)),d2=accountBenchmark(isoBack(1),isoBack(1)),d3=accountBenchmark(isoBack(2),isoBack(2));
     return {entKey:'acct',arTrust:true,flag:'',verdict:'',issues:[],
-      cptTill:ball.cpt,cptL7:l7.cpt,cptW1:w1.cpt,cptDoD:dod.cpt,
+      csTill:100,csL7:100,csW1:100,csW2:100,
+      drrLast7:l7.cost/7,drrPrev7:w1.cost/7,drrW2:w2.cost/7,
+      cptD1:d1.cpt,cptD2:d2.cpt,cptD3:d3.cpt,cptTill:lifeAll.cpt,cptL7:l7.cpt,cptW1:w1.cpt,cptW2:w2.cpt,
       cacTill:ball.cac,cac_w1:bw1.cac,cac_15:b15.cac,cac_30:b30.cac,
-      s2tTill:null,s2tL7:null,s2tW1:null,csL7:null,csW1:null,
-      drrLast7:l7.cost/7,drrPrev7:w1.cost/7,trialsActual:ball.trials28};
+      s2tD1:null,s2tD2:null,s2tD3:null,s2tTill:null,s2tL7:null,s2tW1:null,s2tW2:null,
+      trialsActual:ball.trials28};
   })();
-  // split by flag, spend-desc within each
+  // split by flag, sort by COST SHARE desc (#5) within each
   const byFlag={red:[],green:[],mod:[]};
-  all.forEach(m=>byFlag[m.flag]?.push(m));
-  Object.keys(byFlag).forEach(f=>byFlag[f].sort((a,b)=>b.cost-a.cost));
-  // summary
+  all.forEach(m=>{if(byFlag[m.flag])byFlag[m.flag].push(m);});
+  Object.keys(byFlag).forEach(f=>byFlag[f].sort((a,b)=>(b.csL7||0)-(a.csL7||0)||b.cost-a.cost));
   const spendRisk=byFlag.red.reduce((a,m)=>a+m.drrLast7*7,0), spendScale=byFlag.green.reduce((a,m)=>a+m.drrLast7*7,0);
   let h=`<div class="act-summary">
     <div class="sum-card red"><div class="sum-big">${byFlag.red.length}</div><div class="sum-label">Pause — Action Needed</div><div class="sum-detail">${moneyc(spendRisk)}/wk run-rate at risk</div></div>
     <div class="sum-card green"><div class="sum-big">${byFlag.green.length}</div><div class="sum-label">Scale Opportunities</div><div class="sum-detail">${moneyc(spendScale)}/wk proven, room to push</div></div>
     <div class="sum-card mod"><div class="sum-big">${byFlag.mod.length}</div><div class="sum-label">Watch</div><div class="sum-detail">building signal / near account avg</div></div>
-    <div class="sum-card neutral"><div class="sum-big">${all.length}</div><div class="sum-label">Running ${actGrain}s</div><div class="sum-detail">${acct==='both'?'both accts':acct} · paused excluded</div></div>
+    <div class="sum-card neutral"><div class="sum-big">${all.length}</div><div class="sum-label">Running ${actGrain}s</div><div class="sum-detail">latest data · paused excluded</div></div>
   </div>`;
-  // grain selector
+  // grain selector + entity Name/ID filter (NO date controls here)
   h+=`<div class="act-filter-bar"><span class="ctrl-label">Grain</span>
     <div class="seg" id="actGrainSeg">
       <button class="seg-btn ${actGrain==='campaign'?'on':''}" data-grain="campaign">Campaign</button>
       <button class="seg-btn ${actGrain==='adset'?'on':''}" data-grain="adset">Ad Set</button>
       <button class="seg-btn ${actGrain==='ad'?'on':''}" data-grain="ad">Ad</button>
     </div>
-    <span style="font-size:10.5px;color:var(--ink4);margin-left:auto;">Flat rows at the chosen grain · running only · account = pinned row 0 · spend-desc within each flag. CAC windows all exclude the last ${ACT.matureDays} days (un-matured). DoD shows CPT only (autopay lag makes DoD CAC meaningless).</span>
+    <div class="search-box" style="min-width:240px;"><input id="actEntSearch" placeholder="Filter by name or ID (campaign / ad set / ad)…" value="${(actEntFilter||'').replace(/"/g,'&quot;')}"></div>
+    <span style="font-size:10px;color:var(--ink4);margin-left:auto;">🔒 Actionables always use the latest available data — no date filter. Sorted by Cost Share (highest first) within each flag.</span>
   </div>`;
-  // render three flag tables
+  h+=terminologyLegend();
   function flagTable(title,cls_,arr){
-    if(!arr.length)return `<div class="led-flag-head ${cls_}">${title} <span class="act-count">0</span></div><div class="dd-na" style="margin-bottom:18px;">None at ${actGrain} grain.</div>`;
+    if(!arr.length)return `<div class="led-flag-head ${cls_}">${title} <span class="act-count">0</span></div><div class="dd-na" style="margin-bottom:18px;">None at ${actGrain} grain${q?' matching "'+q+'"':''}.</div>`;
     let t=`<div class="led-flag-head ${cls_}">${title} <span class="act-count">${arr.length}</span></div>`;
     t+=`<div class="act-tbl-wrap"><div class="act-tbl-scroll"><table class="act led">${ledgerHeader()}<tbody>`;
     t+=ledgerRow(acctRow,true);
@@ -1015,8 +1103,15 @@ function vActions(){
   h+=flagTable('🟡 WATCH','mod',byFlag.mod);
   return h;
 }
+// lightweight identity lookup for filtering (no metrics computed)
+function idColsLite(k,id){
+  if(k==='campaign')return {campNm:MAP_CAMP[id]?.s||'',campId:id,asNm:'',asId:'',adNm:'',adId:''};
+  if(k==='adset'){const cid=MAP_ASET[id]?.c||'';return {campNm:MAP_CAMP[cid]?.s||'',campId:cid,asNm:MAP_ASET[id]?.s||'',asId:id,adNm:'',adId:''};}
+  const as=MAP_AD[id]?.as||'',cid=adCamp(id)||'';return {campNm:MAP_CAMP[cid]?.s||'',campId:cid,asNm:MAP_ASET[as]?.s||'',asId:as,adNm:MAP_AD[id]?.s||'',adId:id};
+}
 function bindTree(){
   const gs=$('#actGrainSeg');if(gs)gs.onclick=e=>{if(e.target.dataset.grain){actGrain=e.target.dataset.grain;render();}};
+  const es=$('#actEntSearch');if(es)es.oninput=e=>{actEntFilter=e.target.value;clearTimeout(window._actSearchT);window._actSearchT=setTimeout(render,250);};
 }
 function rebuildFilters(){const fc=$('#fCampaign'),fa=$('#fAdset'),fd=$('#fAd');
   fc.innerHTML='<option value="all">All Campaigns</option>';Object.keys(MAP_CAMP).filter(id=>acct==='both'||MAP_CAMP[id].acct===acct).forEach(id=>{const o=document.createElement('option');o.value=id;o.textContent=MAP_CAMP[id].s;if(id===fCamp)o.selected=true;fc.appendChild(o);});
@@ -1053,7 +1148,7 @@ $('#perfCsv').addEventListener('change',function(e){const files=[...e.target.fil
       // strict validation — kills malformed fragments and bad anchor poisoning
       if(/^\d{6,}$/.test(row.ad_id)&&/^\d{4}-\d{2}-\d{2}$/.test(row.date))acc.push(row);}
     done++;if(done===files.length){
-      ALL_ROWS=acc;const ds=acc.map(r=>r.date).filter(Boolean).sort();if(ds.length){anchor=ds[ds.length-1];$('#anchor').value=anchor;}
+      ALL_ROWS=acc;const ds=acc.map(r=>r.date).filter(Boolean).sort();if(ds.length){anchor=ds[ds.length-1];dataMaxDate=ds[ds.length-1];$('#anchor').value=anchor;}
       const newC=acc.filter(r=>classifyAcct(r.ad_id)==='new').length;
       $('#perfStat').textContent=`${acc.length.toLocaleString()} rows · ${newC.toLocaleString()} new · ${(acc.length-newC).toLocaleString()} old · ${ds[0]} → ${ds[ds.length-1]}`;
       $('#perfDot').className='us-dot ok';$('#updated').textContent='Updated: '+new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
