@@ -240,6 +240,8 @@ table.act.led{font-size:10px;}
 .term-legend summary:hover{background:var(--panel2);}
 .term-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px 18px;padding:6px 16px 16px;font-size:11px;color:var(--ink2);line-height:1.5;}
 .term-grid b{color:var(--ink);font-family:var(--m);font-size:10.5px;}
+.led-rundays .cell{font-family:var(--m);color:var(--ink3);font-size:10px;}
+.cac-actual{font-size:8.5px;color:var(--ink4);font-family:var(--m);margin-top:1px;line-height:1.2;}
 ::-webkit-scrollbar{width:8px;height:8px;}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:10px;}::-webkit-scrollbar-track{background:var(--panel2);}
 .hide{display:none!important;}
 @media(max-width:900px){.side{display:none;}.dd-grid{grid-template-columns:1fr;}}
@@ -827,26 +829,31 @@ function entMetrics(entKey,entId){
   const s2tD1=s2tOf(d1),s2tD2=s2tOf(d2),s2tD3=s2tOf(d3);
   const costD1=d1.cost,costD2=d2.cost,costD3=d3.cost;
   // CAC windows — all matured (exclude last 8 days), D28-adjusted via projected autopays
+  // CAC windows — projected (decision) AND actual (honesty check). #5
   const cac_w1=(function(){const c=aggRangeFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);return ap?c.cost/ap:null;})();
   const cac_15=(function(){const c=aggRangeFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);return ap?c.cost/ap:null;})();
   const cac_30=(function(){const c=aggRangeFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);return ap?c.cost/ap:null;})();
+  // ACTUAL (un-projected) CAC = window spend ÷ raw autopays in window (no curve)
+  const cacActOf=(daysBack)=>{const c=aggRangeFor(isoBack(ACT.matureDays+daysBack),matCut,entKey,entId);return c.autopays?c.cost/c.autopays:null;};
+  const cacAct_w1=cacActOf(7), cacAct_15=cacActOf(15), cacAct_30=cacActOf(30);
+  const cacActTill=(function(){const c=aggRangeFor('2000-01-01',matCut,entKey,entId);return c.autopays?c.cost/c.autopays:null;})();
   // Cost share — Till / L7 / W-1 / W-2 (share of channel spend in each window)
   const chanAll=accountBenchmark('2000-01-01',anchor).cost, chanL7=accountBenchmark(isoBack(6),anchor).cost, chanW1=accountBenchmark(isoBack(13),isoBack(7)).cost, chanW2=accountBenchmark(isoBack(20),isoBack(14)).cost;
   const csTill=chanAll?life.cost/chanAll*100:null, csL7=chanL7?wk.cost/chanL7*100:null, csW1=chanW1?wkW1.cost/chanW1*100:null, csW2=chanW2?wkW2.cost/chanW2*100:null;
   // DRR — L7 / W-1 / W-2 / D-1..D-3
   const drrW2=drr(entKey,entId,20,14);
   // ── #4 FUNNEL DECOMPOSITION DIAGNOSIS ──
-  // rates for current (L7) and baselines (own W-1, account L7)
+  // #1 FIX: self-relative (own prior week) is the PRIMARY trigger. An entity that is
+  // structurally expensive vs account but stable/converting on its OWN trend is NOT a problem.
+  // Account deviation is shown as faint context, and only when the metric is also self-degrading.
   function rates(a){return {
     cpm:a.impressions?a.cost/a.impressions*1000:null,
     ctr:a.impressions?a.clicks/a.impressions*100:null,
     c2i:a.clicks?a.installs/a.clicks*100:null,
     i2s:a.installs?a.signups/a.installs*100:null,
     s2t:a.signups?a.d0/a.signups*100:null };}
-  const rCur=rates(wk), rOwn=rates(wkW1);
+  const rCur=rates(wk), rOwn=rates(wkW1), rOwn2=rates(wkW2);
   const acctWk=(function(){const rs=ALL_ROWS.filter(r=>r.date>=isoBack(6)&&r.date<=anchor&&inAcctFilter(r.ad_id));const s={impressions:0,clicks:0,installs:0,signups:0,d0:0,cost:0};rs.forEach(r=>{for(let k in s)s[k]+=r[k]||0;});return rates(s);})();
-  // for each funnel link, compute deviation vs account and vs own W-1; pick worse
-  // higher-worse for cpm; lower-worse for ctr/c2i/i2s/s2t
   const funnel=[
     {k:'cpm',label:'CPM',hiWorse:true,act:'media/bid/audience'},
     {k:'ctr',label:'CTR',hiWorse:false,act:'creative refresh'},
@@ -857,33 +864,32 @@ function entMetrics(entKey,entId){
   const drivers=[];
   funnel.forEach(f=>{
     const cur=rCur[f.k]; if(cur==null)return;
-    const acctV=acctWk[f.k], ownV=rOwn[f.k];
-    let devAcct=null,devOwn=null;
-    if(acctV&&acctV>0)devAcct=(cur-acctV)/acctV*100;
-    if(ownV&&ownV>0)devOwn=(cur-ownV)/ownV*100;
-    // a "bad" deviation: for hiWorse, positive; for lowWorse, negative
+    const ownV=rOwn[f.k], acctV=acctWk[f.k];
+    // SELF deviation vs own prior week — the trigger
+    let devOwn=(ownV&&ownV>0)?(cur-ownV)/ownV*100:null;
+    const badOwn = f.hiWorse? (devOwn!=null&&devOwn>0?devOwn:null) : (devOwn!=null&&devOwn<0?-devOwn:null);
+    // ACCOUNT deviation — context only
+    let devAcct=(acctV&&acctV>0)?(cur-acctV)/acctV*100:null;
     const badAcct = f.hiWorse? (devAcct!=null&&devAcct>0?devAcct:null) : (devAcct!=null&&devAcct<0?-devAcct:null);
-    const badOwn  = f.hiWorse? (devOwn!=null&&devOwn>0?devOwn:null)  : (devOwn!=null&&devOwn<0?-devOwn:null);
-    const worst=Math.max(badAcct||0,badOwn||0);
-    if(worst>=ACT.funnelMinDev){
-      const vsWhat = (badOwn||0)>(badAcct||0)? 'vs W-1' : 'vs acct';
+    // trigger ONLY on self-degradation beyond threshold
+    if(badOwn!=null && badOwn>=ACT.funnelMinDev){
       const dir = f.hiWorse?'↑':'↓';
-      drivers.push({label:f.label,dir,mag:Math.round(worst),vsWhat,act:f.act,score:worst});
+      // append account context only if it ALSO underperforms account
+      const acctCtx = (badAcct!=null&&badAcct>=ACT.funnelMinDev)? ` (also ${Math.round(badAcct)}% vs acct)` : '';
+      drivers.push({label:f.label,dir,mag:Math.round(badOwn),acctCtx,act:f.act,score:badOwn});
     }
   });
   drivers.sort((a,b)=>b.score-a.score);
   const topDrivers=drivers.slice(0,2);
-  // build a human diagnosis string
   function diagnosis(){
     if(!topDrivers.length)return null;
-    const parts=topDrivers.map(d=>`${d.label} ${d.dir}${d.mag}% ${d.vsWhat}`);
-    // interpretation: where in the funnel
+    const parts=topDrivers.map(d=>`${d.label} ${d.dir}${d.mag}% vs own W-1${d.acctCtx}`);
     const keys=topDrivers.map(d=>d.label);
     let interp='';
-    if(keys.includes('CPM')&&keys.includes('CTR'))interp=' — creative fatigue (cost up, engagement down)';
-    else if(keys.includes('CPM'))interp=' — auction/audience pressure (media cost)';
-    else if(keys.includes('CTR'))interp=' — weak creative hook';
-    else if(keys.includes('Signup→Trial'))interp=' — activation/paywall, not media';
+    if(keys.includes('CPM')&&keys.includes('CTR'))interp=' — creative fatigue (own cost up, own engagement down)';
+    else if(keys.includes('CPM'))interp=' — rising own media cost (auction/audience/frequency)';
+    else if(keys.includes('CTR'))interp=' — creative tiring (own CTR falling)';
+    else if(keys.includes('Signup→Trial'))interp=' — activation/paywall slipping, not media';
     else if(keys.includes('Install→Signup'))interp=' — onboarding friction, not media';
     else if(keys.includes('Click→Install'))interp=' — store/landing drop-off';
     return parts.join(' · ')+interp;
@@ -929,7 +935,8 @@ function entMetrics(entKey,entId){
     cptTill,cptWeek,cptΔ,cacTill,cacWeekEst,arTill,arWeekEst,s2tTill,s2tWeek,
     arLadder,headlineAR,headlineARLabel,runDays:rd,drrLast7,drrPrev7,drrW2,drrΔ,cacVsAcct,cptVsAcct,
     acctCac:bench.cac,acctCpt:bench.cpt,
-    cptL7,cptW1,cptW2,cac_w1,cac_15,cac_30,s2tL7,s2tW1,s2tW2,csTill,csL7,csW1,csW2,
+    cptL7,cptW1,cptW2,cac_w1,cac_15,cac_30,cacActTill,cacAct_w1,cacAct_15,cacAct_30,
+    s2tL7,s2tW1,s2tW2,csTill,csL7,csW1,csW2,
     cptD1,cptD2,cptD3,s2tD1,s2tD2,s2tD3,costD1,costD2,costD3,
     funnelDiag,topDrivers};
 }
@@ -938,6 +945,25 @@ function moneyc(n){return(!n||isNaN(n))?'—':'₹'+Math.round(n).toLocaleString
 function pctc(v){return(v==null||isNaN(v))?'—':v.toFixed(1)+'%';}
 function cls_cpt(v){return cls(v,T.cpt.g,T.cpt.a,0);}
 function cacCell(v,lb,base){if(v==null||isNaN(v))return '<div class="cell">—</div>';if(lb)return `<div class="cell lowbase">${moneyc(v)}<span class="lowbase-tag">n${base}</span></div>`;return `<div class="cell val-${cls(v,T.cac.g,T.cac.a,0)}">${moneyc(v)}</div>`;}
+// #5 projected CAC (primary, threshold-colored) with actual beneath (honesty check)
+function cacCellPA(proj,act,lb,base){
+  if(proj==null||isNaN(proj))return '<div class="cell">—</div>';
+  const projHtml = lb? `<span class="lowbase">${moneyc(proj)}<span class="lowbase-tag">n${base}</span></span>` : `<span class="val-${cls(proj,T.cac.g,T.cac.a,0)}">${moneyc(proj)}</span>`;
+  const actHtml = (act!=null&&!isNaN(act))? `<div class="cac-actual" title="actual collected, un-projected">act ${moneyc(act)}</div>` : `<div class="cac-actual" style="color:var(--ink4)">act —</div>`;
+  return `<div class="cell">${projHtml}${actHtml}</div>`;
+}
+// #2 DIRECTIONAL color: green=improving, red=degrading, yellow=flat (±noiseBand). vs the entity's OWN prior period.
+function dirCell(cur,prior,higherWorse,fmt){
+  fmt=fmt||moneyc;
+  if(cur==null||isNaN(cur))return '<div class="cell">—</div>';
+  if(prior==null||isNaN(prior)||prior===0)return `<div class="cell">${fmt(cur)}</div>`;
+  const d=(cur-prior)/prior*100;
+  const band=8; // ±8% = "similar range" → yellow
+  let cl='val-warn'; // flat default = yellow
+  if(Math.abs(d)>=band){ const worse = higherWorse? d>0 : d<0; cl = worse?'val-bad':'val-good'; }
+  const arrow = Math.abs(d)<band? '' : `<span class="cell-delta ${(higherWorse?d>0:d<0)?'d-worse':'d-better'}">${d>0?'▲':'▼'}${Math.abs(d).toFixed(0)}%</span>`;
+  return `<div class="cell ${cl}">${fmt(cur)}${arrow}</div>`;
+}
 function cptCell(v){if(v==null||isNaN(v))return '<div class="cell">—</div>';return `<div class="cell val-${cls(v,T.cpt.g,T.cpt.a,0)}">${moneyc(v)}</div>`;}
 function s2tCell(v){if(v==null||isNaN(v))return '<div class="cell">—</div>';return `<div class="cell val-${cls(v,T.s2t.g,T.s2t.a,1)}">${pctc(v)}</div>`;}
 function issueCell(issues){if(!issues||!issues.length)return '<div class="cell issue-cell">—</div>';return `<div class="cell issue-cell">${issues.slice(0,3).map(([t,txt])=>`<span class="issue-tag it-${t}">${txt}</span>`).join('')}</div>`;}
@@ -958,36 +984,44 @@ function ledgerRow(m,isAcct){
   const nm=(name,id)=>`<div class="ent-nm" title="${name}">${name}</div>${id?`<div class="ent-id">${id}</div>`:''}`;
   const srcBadge=c.src?`<span class="src-pill src-${c.src}">${c.src==='google'?'G':'M'}</span>`:'';
   const dim='style="color:var(--ink3)"';
+  // #2 directional cells: account row stays neutral (threshold color), entity rows color by self-trend
+  const cptD=(cur,prior)=>isAcct?cptCell(cur):dirCell(cur,prior,true,moneyc);   // CPT higher=worse
+  const s2tD=(cur,prior)=>isAcct?s2tCell(cur):dirCell(cur,prior,false,pctc);     // S→T higher=better
+  const drrD=(cur,prior)=>dirCell(cur,prior,false,moneyc);                       // DRR: treat ↑ as "more invested" (neutral-good); show trend
   return `<tr class="led-row ${isAcct?'led-acct':''} ${!isAcct&&m.flag?'flag-l-'+m.flag:''}">
     <td class="led-id led-c-col">${srcBadge}${nm(c.campNm,c.campId)}</td>
     <td class="led-id">${nm(c.asNm,c.asId)}</td>
     <td class="led-id">${nm(c.adNm,c.adId)}</td>
+    <td class="led-rundays"><div class="cell">${isAcct?'—':(m.runDays||0)+'d'}</div></td>
     <td><div class="cell">${verdictTxt}</div></td>
     <td class="led-issue">${isAcct?'<div class="cell" style="color:var(--ink4)">— account avg —</div>':issueCell(m.issues)}</td>
     <td class="grp-div"><div class="cell">${pctc(m.csTill)}</div></td>
     <td><div class="cell">${pctc(m.csL7)}</div></td>
     <td><div class="cell" ${dim}>${pctc(m.csW1)}</div></td>
     <td><div class="cell" ${dim}>${pctc(m.csW2)}</div></td>
-    <td class="grp-div"><div class="cell">${moneyc(m.drrLast7)}</div></td>
-    <td><div class="cell" ${dim}>${moneyc(m.drrPrev7)}</div></td>
+    <td class="grp-div">${drrD(m.costD1,m.costD2)}</td>
+    <td>${drrD(m.costD2,m.costD3)}</td>
+    <td>${isAcct?'<div class="cell">'+moneyc(m.costD3)+'</div>':'<div class="cell">'+moneyc(m.costD3)+'</div>'}</td>
+    <td class="grp-div">${drrD(m.drrLast7,m.drrPrev7)}</td>
+    <td>${drrD(m.drrPrev7,m.drrW2)}</td>
     <td><div class="cell" ${dim}>${moneyc(m.drrW2)}</div></td>
-    <td class="grp-div">${cptCell(m.cptD1)}</td>
-    <td>${cptCell(m.cptD2)}</td>
+    <td class="grp-div">${cptD(m.cptD1,m.cptD2)}</td>
+    <td>${cptD(m.cptD2,m.cptD3)}</td>
     <td>${cptCell(m.cptD3)}</td>
     <td class="grp-div">${cptCell(m.cptTill)}</td>
-    <td>${cptCell(m.cptL7)}</td>
-    <td>${cptCell(m.cptW1)}</td>
+    <td>${cptD(m.cptL7,m.cptW1)}</td>
+    <td>${cptD(m.cptW1,m.cptW2)}</td>
     <td>${cptCell(m.cptW2)}</td>
-    <td class="grp-div">${cacCell(m.cacTill,lb,m.trialsActual)}</td>
-    <td>${cacCell(m.cac_w1,lb,m.trialsActual)}</td>
-    <td>${cacCell(m.cac_15,lb,m.trialsActual)}</td>
-    <td>${cacCell(m.cac_30,lb,m.trialsActual)}</td>
-    <td class="grp-div">${s2tCell(m.s2tD1)}</td>
-    <td>${s2tCell(m.s2tD2)}</td>
+    <td class="grp-div">${isAcct?cacCell(m.cacTill,false,0):cacCellPA(m.cacTill,m.cacActTill,lb,m.trialsActual)}</td>
+    <td>${isAcct?cacCell(m.cac_w1,false,0):cacCellPA(m.cac_w1,m.cacAct_w1,lb,m.trialsActual)}</td>
+    <td>${isAcct?cacCell(m.cac_15,false,0):cacCellPA(m.cac_15,m.cacAct_15,lb,m.trialsActual)}</td>
+    <td>${isAcct?cacCell(m.cac_30,false,0):cacCellPA(m.cac_30,m.cacAct_30,lb,m.trialsActual)}</td>
+    <td class="grp-div">${s2tD(m.s2tD1,m.s2tD2)}</td>
+    <td>${s2tD(m.s2tD2,m.s2tD3)}</td>
     <td>${s2tCell(m.s2tD3)}</td>
     <td class="grp-div">${s2tCell(m.s2tTill)}</td>
-    <td>${s2tCell(m.s2tL7)}</td>
-    <td>${s2tCell(m.s2tW1)}</td>
+    <td>${s2tD(m.s2tL7,m.s2tW1)}</td>
+    <td>${s2tD(m.s2tW1,m.s2tW2)}</td>
     <td>${s2tCell(m.s2tW2)}</td>
   </tr>`;
 }
@@ -997,18 +1031,21 @@ function ledgerHeader(){
       <th class="led-c-col l" rowspan="2">Campaign</th>
       <th class="l" rowspan="2">Ad Set</th>
       <th class="l" rowspan="2">Ad</th>
+      <th rowspan="2">Run<br>Days</th>
       <th rowspan="2">Decision</th>
       <th class="l" rowspan="2">Issue (root-cause)</th>
       <th class="grp-div" colspan="4">Cost Share %</th>
-      <th class="grp-div" colspan="3">Daily Run Rate (₹/day)</th>
+      <th class="grp-div" colspan="3">Daily Run Rate ₹ (day)</th>
+      <th class="grp-div" colspan="3">DRR ₹ (7-day windows)</th>
       <th class="grp-div" colspan="3">CPT Daily (D28-adj)</th>
       <th class="grp-div" colspan="4">CPT Windows (D28-adj)</th>
-      <th class="grp-div" colspan="4">CAC (matured, D28-adj)</th>
+      <th class="grp-div" colspan="4">CAC matured (proj / actual)</th>
       <th class="grp-div" colspan="3">Signup→Trial % Daily</th>
       <th class="grp-div" colspan="4">Signup→Trial % Windows</th>
     </tr>
     <tr class="led-subhead">
       <th class="grp-div">Till</th><th>L7</th><th>W-1</th><th>W-2</th>
+      <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
       <th class="grp-div">L7</th><th>W-1</th><th>W-2</th>
       <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
       <th class="grp-div">Till</th><th>L7</th><th>W-1</th><th>W-2</th>
@@ -1027,11 +1064,13 @@ function terminologyLegend(){
       <div><b>D-1 / D-2 / D-3</b> — the single most recent day, the day before, and the day before that.</div>
       <div><b>15d−8</b> — a 15-day window that <i>excludes</i> the last 8 days. Used for CAC because autopays only land ~Day 8, so the last 8 days haven't matured yet.</div>
       <div><b>30d−8</b> — same idea, a 30-day window excluding the un-matured last 8 days.</div>
-      <div><b>CAC matured</b> — Customer Acquisition Cost using only cohorts old enough for autopay to have developed; un-matured tail is projected via the autopay curve.</div>
+      <div><b>CAC matured (proj / actual)</b> — top number is the <i>decision</i> CAC: matured cohorts plus the un-matured tail projected to D35 via the autopay curve. The small <b>act</b> beneath is the <i>actual</i> CAC from autopays already collected (no projection). When proj and act are close, the cohort has matured and you can trust it; when they diverge, the number leans on the model — act, but watch it.</div>
       <div><b>D28-adj</b> — trials/CPT scaled to estimated Day-28 cohort (D0 × 1.17) so early days are comparable to mature ones.</div>
       <div><b>Cost Share</b> — this entity's spend as a % of the whole channel's spend in that window (how much of the budget it carries).</div>
-      <div><b>DRR</b> — Daily Run Rate: average ₹ spent per day in the window.</div>
-      <div><b>Issue (root-cause)</b> — the funnel link(s) most responsible for the problem: CPM (media cost), CTR (creative), Click→Install (store), Install→Signup (onboarding), Signup→Trial (paywall). Judged vs account avg <i>and</i> vs the entity's own W-1.</div>
+      <div><b>DRR</b> — Daily Run Rate: average ₹ spent per day in the window. Daily columns (D-1/D-2/D-3) are that single day's spend.</div>
+      <div><b>Run Days</b> — days the entity has been live (from its first day of spend to the latest data date).</div>
+      <div><b>Issue (root-cause)</b> — the funnel link(s) most responsible, judged primarily against the entity's <i>own</i> prior week (a structurally expensive but stable unit is not a problem). Account comparison appears only as context when the unit is also worse than account: CPM (media cost), CTR (creative), Click→Install (store), Install→Signup (onboarding), Signup→Trial (paywall).</div>
+      <div><b>Cell colors</b> — on trend columns: <span style="color:var(--good);font-weight:700">green = improving</span> vs the entity's own prior period, <span style="color:var(--bad);font-weight:700">red = degrading</span>, <span style="color:var(--warn);font-weight:700">yellow = within ±8% (similar)</span>. On Till / threshold columns, color reflects the absolute benchmark (e.g. CPT vs ₹150 action line).</div>
     </div></details>`;
 }
 function vActions(){
@@ -1059,11 +1098,13 @@ function vActionsInner(){
     const ball=accountBenchmark('2000-01-01',matCut),b30=accountBenchmark(isoBack(ACT.matureDays+30),matCut),b15=accountBenchmark(isoBack(ACT.matureDays+15),matCut),bw1=accountBenchmark(isoBack(ACT.matureDays+7),matCut);
     const lifeAll=accountBenchmark('2000-01-01',anchor),l7=accountBenchmark(isoBack(6),anchor),w1=accountBenchmark(isoBack(13),isoBack(7)),w2=accountBenchmark(isoBack(20),isoBack(14));
     const d1=accountBenchmark(isoBack(0),isoBack(0)),d2=accountBenchmark(isoBack(1),isoBack(1)),d3=accountBenchmark(isoBack(2),isoBack(2));
-    return {entKey:'acct',arTrust:true,flag:'',verdict:'',issues:[],
+    return {entKey:'acct',arTrust:true,flag:'',verdict:'',issues:[],runDays:null,
       csTill:100,csL7:100,csW1:100,csW2:100,
       drrLast7:l7.cost/7,drrPrev7:w1.cost/7,drrW2:w2.cost/7,
+      costD1:d1.cost,costD2:d2.cost,costD3:d3.cost,
       cptD1:d1.cpt,cptD2:d2.cpt,cptD3:d3.cpt,cptTill:lifeAll.cpt,cptL7:l7.cpt,cptW1:w1.cpt,cptW2:w2.cpt,
       cacTill:ball.cac,cac_w1:bw1.cac,cac_15:b15.cac,cac_30:b30.cac,
+      cacActTill:null,cacAct_w1:null,cacAct_15:null,cacAct_30:null,
       s2tD1:null,s2tD2:null,s2tD3:null,s2tTill:null,s2tL7:null,s2tW1:null,s2tW2:null,
       trialsActual:ball.trials28};
   })();
