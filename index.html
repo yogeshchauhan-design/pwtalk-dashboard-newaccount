@@ -518,6 +518,7 @@ function accountBenchmark(from,to){
   return {cpt:t28?cost/t28:null,cac:projAP?cost/projAP:null,cost,trials28:t28,autopays:projAP};}
 function cls(v,g,a,hi){if(v===null||v===undefined||isNaN(v))return'';return hi?(v>=g?'good':v>=a?'warn':'bad'):(v<=g?'good':v<=a?'warn':'bad');}
 function money(n){return(!n||isNaN(n))?'—':'₹'+Math.round(n).toLocaleString('en-IN');}
+function money1dp(n){if(!n||isNaN(n))return'—';return'₹'+(Math.round(n*10)/10).toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1});}
 function num(n){return(n===null||n===undefined||isNaN(n))?'—':n>=100000?(n/100000).toFixed(1)+'L':n>=1000?(n/1000).toFixed(1)+'K':Math.round(n).toString();}
 function pct(n){return(n===null||n===undefined||isNaN(n))?'—':n.toFixed(1)+'%';}
 function tr(s,n){return s&&s.length>n?s.slice(0,n)+'…':(s||'—');}
@@ -527,20 +528,21 @@ function isoBack(days){const d=new Date(anchor);d.setDate(d.getDate()-days);retu
 const METRIC_DEFS={
   marketing:[
     {k:'cost',label:'Cost',fmt:money,calc:s=>s.cost},
+    {k:'drr',label:'DRR (Daily Run Rate)',fmt:money1dp,calc:(s,ctx)=>ctx.periodDays?s.cost/ctx.periodDays:null},
     {k:'cost_share',label:'Cost Share %',fmt:pct,calc:(s,ctx)=>ctx.totCost?s.cost/ctx.totCost*100:null},
-    {k:'cpm',label:'CPM',fmt:money,calc:s=>s.impressions?s.cost/s.impressions*1000:null,th:[T.cpm.g,T.cpm.a,0]},
+    {k:'cpm',label:'CPM',fmt:money1dp,calc:s=>s.impressions?s.cost/s.impressions*1000:null,th:[T.cpm.g,T.cpm.a,0]},
     {k:'impressions',label:'Impressions',fmt:num,calc:s=>s.impressions,abs:true},
     {k:'clicks',label:'Clicks',fmt:num,calc:s=>s.clicks,abs:true},
-    {k:'cpc',label:'CPC',fmt:money,calc:s=>s.clicks?s.cost/s.clicks:null},
+    {k:'cpc',label:'CPC',fmt:money1dp,calc:s=>s.clicks?s.cost/s.clicks:null},
     {k:'ctr',label:'CTR',fmt:pct,calc:s=>s.impressions?s.clicks/s.impressions*100:null,th:[T.ctr.g,T.ctr.a,1]},
   ],
   funnel:[
     {k:'c2i',label:'Click→Install %',fmt:pct,calc:s=>s.clicks?s.installs/s.clicks*100:null,th:[T.c2i.g,T.c2i.a,1]},
     {k:'installs',label:'Installs',fmt:num,calc:s=>s.installs,abs:true},
-    {k:'cpi',label:'CPI',fmt:money,calc:s=>s.installs?s.cost/s.installs:null},
+    {k:'cpi',label:'CPI',fmt:money1dp,calc:s=>s.installs?s.cost/s.installs:null},
     {k:'i2s',label:'Install→Signup %',fmt:pct,calc:s=>s.installs?s.signups/s.installs*100:null,th:[T.i2s.g,T.i2s.a,1]},
     {k:'signups',label:'Signups',fmt:num,calc:s=>s.signups,abs:true},
-    {k:'cps',label:'Cost/Signup',fmt:money,calc:s=>s.signups?s.cost/s.signups:null},
+    {k:'cps',label:'Cost/Signup',fmt:money1dp,calc:s=>s.signups?s.cost/s.signups:null},
     {k:'s2t_d0',label:'Signup→Trial % (D0)',fmt:pct,calc:s=>s.signups?s.d0/s.signups*100:null,th:[T.s2t.g,T.s2t.a,1]},
     {k:'s2t_d28e',label:'Signup→Trial % (D28 Est)',fmt:pct,calc:s=>s.signups?(s.d0*EST.d28)/s.signups*100:null,th:[T.s2t.g,T.s2t.a,1]},
   ],
@@ -553,13 +555,13 @@ const METRIC_DEFS={
     {k:'est_t_d28',label:'Est Trials D28 (+17%)',fmt:num,calc:s=>s.d0?Math.round(s.d0*EST.d28):null,abs:true},
   ],
   cpt:[
-    {k:'cpt_meta',label:'CPT (Meta attribution)',fmt:money,calc:(s,ctx)=>ctx.metaCPR||null,th:[T.cpt.g,T.cpt.a,0]},
-    {k:'cpt',label:'CPT (AF Lifetime)',fmt:money,calc:s=>s.trials?s.cost/s.trials:null,th:[T.cpt.g,T.cpt.a,0]},
-    {k:'cpt_d0',label:'CPT (D0)',fmt:money,calc:s=>s.d0?s.cost/s.d0:null,th:[T.cpt.g,T.cpt.a,0]},
-    {k:'cpt_d7',label:'CPT (D7)',fmt:money,calc:s=>s.d7?s.cost/s.d7:null,th:[T.cpt.g,T.cpt.a,0]},
-    {k:'cpt_d14',label:'CPT (D14)',fmt:money,calc:s=>s.d14?s.cost/s.d14:null,th:[T.cpt.g,T.cpt.a,0]},
-    {k:'cpt_d28',label:'CPT (D28)',fmt:money,calc:s=>s.d28?s.cost/s.d28:null,th:[T.cpt.g,T.cpt.a,0]},
-    {k:'cpt_est_d28',label:'CPT Est D28',fmt:money,calc:s=>s.d0?s.cost/(s.d0*EST.d28):null,th:[T.cpt.g,T.cpt.a,0]},
+    {k:'cpt_meta',label:'CPT (Meta attribution)',fmt:money1dp,calc:(s,ctx)=>ctx.metaCPR||null,th:[T.cpt.g,T.cpt.a,0]},
+    {k:'cpt',label:'CPT (AF Lifetime)',fmt:money1dp,calc:s=>s.trials?s.cost/s.trials:null,th:[T.cpt.g,T.cpt.a,0]},
+    {k:'cpt_d0',label:'CPT (D0)',fmt:money1dp,calc:s=>s.d0?s.cost/s.d0:null,th:[T.cpt.g,T.cpt.a,0]},
+    {k:'cpt_d7',label:'CPT (D7)',fmt:money1dp,calc:s=>s.d7?s.cost/s.d7:null,th:[T.cpt.g,T.cpt.a,0]},
+    {k:'cpt_d14',label:'CPT (D14)',fmt:money1dp,calc:s=>s.d14?s.cost/s.d14:null,th:[T.cpt.g,T.cpt.a,0]},
+    {k:'cpt_d28',label:'CPT (D28)',fmt:money1dp,calc:s=>s.d28?s.cost/s.d28:null,th:[T.cpt.g,T.cpt.a,0]},
+    {k:'cpt_est_d28',label:'CPT Est D28',fmt:money1dp,calc:s=>s.d0?s.cost/(s.d0*EST.d28):null,th:[T.cpt.g,T.cpt.a,0]},
   ],
   cac:[
     {k:'autopay',label:'Autopay (actual)',fmt:num,calc:s=>s.autopays,early:true,abs:true},
@@ -585,6 +587,7 @@ const METRIC_DEFS={
 const GROUP_LABELS={marketing:'Marketing',funnel:'Funnel',trials:'Trial Cohorts',cpt:'CPT Cohorts',cac:'CAC & Autopay',autopayco:'Autopay Cohort Maturation (proj)',video:'Video (new acct · Jun 1–18)'};
 let rowVisible={};
 Object.keys(METRIC_DEFS).forEach(g=>METRIC_DEFS[g].forEach(m=>{rowVisible[m.k]=!m.abs;}));
+rowVisible['drr']=true;
 // autopay cohort group: show the AR ladder by default, keep raw autopay counts off (abs)
 ['ar_d0','ar_d7','ar_d14','ar_d28'].forEach(k=>rowVisible[k]=true);
 function setView(v){view=v;$$('.nav-item').forEach(n=>n.classList.toggle('on',n.dataset.view===v));
@@ -601,15 +604,29 @@ function updateAcctUI(){
   badge.className='acct-badge '+(acct==='new'?'badge-new':acct==='old'?'badge-old':'badge-both');
   $('#footAcct').textContent=acct==='new'?'New: PWM35 · 1604251083884176':acct==='old'?'Old account (AppsFlyer only)':'Both accounts combined';
   ['creative','placement','demo'].forEach(v=>{const n=document.querySelector(`.nav-item[data-view="${v}"]`);if(n){n.style.opacity=acct==='old'?'0.4':'1';n.style.pointerEvents=acct==='old'?'none':'auto';}});}
-function render(){updateAcctUI();rebuildFilters();const c=$('#views');
+let _renderPending=false;
+function render(){
+  if(_renderPending)return; // debounce — coalesce rapid fire calls (filter dropdowns)
+  _renderPending=true;
+  // Paint nav/badge immediately, defer heavy compute to next frame
+  updateAcctUI();rebuildFilters();
+  requestAnimationFrame(()=>{_renderPending=false;_renderInner();});}
+function _renderInner(){
+  const c=$('#views');
   if(ALL_ROWS.length===0&&(view==='campaign'||view==='adset'||view==='ad'||view==='actions')){
     c.innerHTML='<div class="empty-state"><div class="empty-ic">📂</div><div style="font-size:13px;font-weight:600;margin-bottom:6px;">No performance data loaded</div><div style="font-size:11px;color:var(--ink4);">1. Upload Mapping CSV(s) via 🗂 — supports Meta and Google in one multi-select<br>2. Upload Performance CSV(s) via 📂 — Meta ad-level and Google adset-level auto-detected<br>3. Google data: select <b>Google (UAC)</b> or <b>Both</b> in account dropdown</div></div>';return;}
+  // Show loading indicator for heavy views
+  if(view==='actions'||view==='scorecard'){
+    c.innerHTML='<div class="empty-state"><div class="empty-ic" style="animation:spin 1s linear infinite;">⏳</div><div style="font-size:13px;font-weight:600;">Computing…</div></div>';
+    setTimeout(()=>{
+      if(view==='actions')c.innerHTML=vActions();
+      else c.innerHTML=vScorecard();
+      bindMatrix();bindTree();
+    },20);return;}
   if(view==='campaign'||view==='adset'||view==='ad')c.innerHTML=vMatrix(view);
   else if(view==='creative')c.innerHTML=isNewView()?vCreative():naMeta('Video Metrics');
   else if(view==='placement')c.innerHTML=isNewView()?vPlacement():naMeta('Placements');
   else if(view==='demo')c.innerHTML=isNewView()?vDemo():naMeta('Demographics');
-  else if(view==='actions')c.innerHTML=vActions();
-  else if(view==='scorecard')c.innerHTML=vScorecard();
   bindMatrix();bindTree();}
 function naMeta(t){return `<div class="banner warn">📊 ${t} requires Meta data — only connected for the New account. Switch to New or Both to see this view. For the Old account, discuss ${t.toLowerCase()} manually.</div>`;}
 function videoVal(e,type){
@@ -691,13 +708,14 @@ function mtxTableHTML(title,sums,P,extraRows,tagHtml){
           const apt={D0:'D7',D7:'D14',D14:'D21',D28:'D35'}[md.arc];
           const t=s[tk]||0;if(!t)return null;
           return extraRows?extraRows[idx].projAP[apt]/t*100:null;}
-        return md.calc(s,{totCost:s.cost});});
+        const _per=P[idx]||P[0];const _pDays=Math.max(1,Math.round((new Date(_per.to)-new Date(_per.from))/86400000)+1);
+        return md.calc(s,{totCost:s.cost,periodDays:_pDays});});
       const v0=vals[0],v1=vals[1];let dHTML='—';
       if(v0!=null&&v1!=null&&v1!==0&&!isNaN(v0)&&!isNaN(v1)){
         const d=(v0-v1)/v1*100,up=d>0,hi=md.th?md.th[2]===1:true,good=hi?up:!up;
         dHTML=`<span class="${good?(up?'d-up-g':'d-dn-g'):(up?'d-up-b':'d-dn-b')}">${up?'▲':'▼'}${Math.abs(d).toFixed(0)}%</span>`;}
       h+=`<tr><td class="metric-name">${md.label}</td>`;
-      vals.forEach(v=>{const disp=md.fmt(v);const cc=md.th&&v!=null&&!isNaN(v)?'val-'+cls(v,md.th[0],md.th[1],md.th[2]):'';h+=`<td class="${cc}">${disp}</td>`;});
+      vals.forEach(v=>{const disp=md.fmt(v);h+=`<td>${disp}</td>`;});
       h+=`<td class="delta-col">${dHTML}</td></tr>`;});});
   h+=`</tbody></table></div>`;
   return h;}
@@ -749,62 +767,71 @@ function entityTableHTML(entKey,entId,P){
     ${mtxTableHTML('',sums,P,null,'')}
   </div>`;}
 
-function filteredEntityListHTML(entKey,P){
-  // Filtered list of entities (for campaign tab only when no specific selection)
-  let ids=[];
-  if(entKey==='campaign')
-    ids=Object.keys(MAP_CAMP).filter(id=>(acct==='both'||MAP_CAMP[id].acct===acct)&&(fCamp==='all'||id===fCamp));
-  else if(entKey==='adset')
-    ids=Object.keys(MAP_ASET).filter(id=>(acct==='both'||MAP_ASET[id].acct===acct)&&(fCamp==='all'||MAP_ASET[id].c===fCamp)&&(fAset==='all'||id===fAset));
-  else
-    ids=Object.keys(MAP_AD).filter(id=>(acct==='both'||MAP_AD[id].acct===acct)&&(fCamp==='all'||adCamp(id)===fCamp)&&(fAset==='all'||adAset(id)===fAset)&&(fAd==='all'||id===fAd));
-  if(search){const q=search.toLowerCase();ids=ids.filter(id=>{const nm=entKey==='campaign'?MAP_CAMP[id]?.s:entKey==='adset'?MAP_ASET[id]?.s:MAP_AD[id]?.s;return (nm+' '+id).toLowerCase().includes(q);});}
-  const P_full=periods();
-  ids=ids.filter(id=>{const s=aggFast(P_full[P_full.length-1].from,P_full[0].to,entKey,id);return s.cost>0||s.impressions>0;});
-  ids.sort((a,b)=>aggFast(P[0].from,P[0].to,entKey,b).cost-aggFast(P[0].from,P[0].to,entKey,a).cost);
-  if(!ids.length)return `<div class="empty-state"><div class="empty-ic">🔍</div><div>No ${entKey}s with data in this window.</div></div>`;
-  return ids.map(id=>entityTableHTML(entKey,id,P)).join('');}
+function emptyMetricRow(P){
+  // Returns a metrics block showing "—" for all values (no filter selected state)
+  return `<div class="matrix-card"><div class="mtx-entityhead" style="cursor:default;">
+    <span style="font-size:12px;font-weight:600;color:var(--ink3);padding:0 4px;">Select a campaign in the filter above to see campaign-level data</span></div></div>`;}
 
 function vMatrix(level){
-  AGG_DIRTY=true; // always rebuild cache when view renders (filters may have changed)
-  buildAggCache();
+  if(AGG_DIRTY)buildAggCache();
   const P=periods();
-  let h='';
+  const banner=`<div class="banner ${gran!=='dod'?'warn':''}">📅 <b>${gran.toUpperCase()}</b> · ${numCols} periods · anchor ${anchor}.</div>`;
+  let h=banner;
+
   if(level==='campaign'){
-    // Portfolio section: Combined + Google + Meta (filters do NOT affect these)
-    h+=`<div class="sec-head"><span class="sec-title" style="color:var(--brand);">📊 Portfolio Overview</span><span class="sec-line"></span><span style="font-size:10px;color:var(--ink4);">Filters below do not affect these rows</span></div>`;
-    h+=portfolioSectionHTML(P);
-    // Filtered campaign(s) below
-    const activeCampFilter=fCamp!=='all'?fCamp:null;
-    h+=`<div class="sec-head"><span class="sec-title">${activeCampFilter?'Campaign: '+(MAP_CAMP[activeCampFilter]?.s||activeCampFilter).slice(0,40):'All Campaigns (use filter to drill into one)'}</span><span class="sec-line"></span></div>`;
-    h+=filteredEntityListHTML('campaign',P);
+    // ── Table 1: Combined (Google + Meta) ──
+    h+=`<div class="sec-head"><span class="sec-title" style="color:var(--brand);">All Channels (Google + Meta)</span><span class="sec-line"></span><span style="font-size:10px;color:var(--ink4);">These 3 rows are not affected by the campaign filter below</span></div>`;
+    h+=portfolioSectionHTML(P); // renders Combined / Google / Meta internally
+
+    // ── Table 4: Single campaign (filter-driven) ──
+    h+=`<div class="sec-head"><span class="sec-title">Campaign Detail</span><span class="sec-line"></span><span style="font-size:10px;color:var(--ink4);">Select a campaign in the dropdown to populate</span></div>`;
+    if(fCamp&&fCamp!=='all'){
+      const t=entityTableHTML('campaign',fCamp,P);
+      h+=t||`<div class="banner warn">No data for selected campaign in this window.</div>`;
+    } else {
+      h+=emptyMetricRow(P);
+    }
+
   } else if(level==='adset'){
-    // Parent campaign table (fixed — filter drives which campaign is shown)
+    // ── Table 1: Parent campaign ──
+    h+=`<div class="sec-head"><span class="sec-title">Campaign</span><span class="sec-line"></span></div>`;
     if(fCamp&&fCamp!=='all'){
-      h+=`<div class="sec-head"><span class="sec-title">Campaign</span><span class="sec-line"></span></div>`;
-      h+=entityTableHTML('campaign',fCamp,P)||`<div class="banner warn">No data for selected campaign in this window.</div>`;
+      h+=entityTableHTML('campaign',fCamp,P)||`<div class="banner warn">No campaign data in this window.</div>`;
+    } else {
+      h+=`<div class="banner">Select a Campaign in the filter above — then you can also drill to a specific Ad Set below.</div>`;
     }
-    // Filtered adsets
-    h+=`<div class="sec-head"><span class="sec-title">${fAset!=='all'?'Ad Set: '+(MAP_ASET[fAset]?.s||fAset).slice(0,40):'Ad Sets'+(fCamp!=='all'?' in this campaign':'')}</span><span class="sec-line"></span></div>`;
-    h+=filteredEntityListHTML('adset',P);
-  } else if(level==='ad'){
-    // Grandparent campaign
-    if(fCamp&&fCamp!=='all'){
-      h+=`<div class="sec-head"><span class="sec-title">Campaign</span><span class="sec-line"></span></div>`;
-      h+=entityTableHTML('campaign',fCamp,P)||'';
-    }
-    // Parent adset
+    // ── Table 2: Ad Set (filter-driven) ──
+    h+=`<div class="sec-head"><span class="sec-title">Ad Set Detail</span><span class="sec-line"></span><span style="font-size:10px;color:var(--ink4);">Select an Ad Set in the dropdown to populate</span></div>`;
     if(fAset&&fAset!=='all'){
-      h+=`<div class="sec-head"><span class="sec-title">Ad Set</span><span class="sec-line"></span></div>`;
-      h+=entityTableHTML('adset',fAset,P)||'';
+      h+=entityTableHTML('adset',fAset,P)||`<div class="banner warn">No ad set data in this window.</div>`;
+    } else {
+      h+=emptyMetricRow(P);
     }
-    // Filtered ad(s)
-    h+=`<div class="sec-head"><span class="sec-title">${fAd!=='all'?'Ad: '+(MAP_AD[fAd]?.s||fAd).slice(0,40):'Ads'+(fAset!=='all'?' in this ad set':'')+(fCamp!=='all'?' (campaign filtered)':'')}</span><span class="sec-line"></span></div>`;
-    h+=filteredEntityListHTML('ad',P);
+
+  } else if(level==='ad'){
+    // ── Table 1: Grandparent campaign ──
+    h+=`<div class="sec-head"><span class="sec-title">Campaign</span><span class="sec-line"></span></div>`;
+    if(fCamp&&fCamp!=='all'){
+      h+=entityTableHTML('campaign',fCamp,P)||`<div class="banner warn">No campaign data in this window.</div>`;
+    } else {
+      h+=`<div class="banner">Select a Campaign → Ad Set → Ad using the filters above.</div>`;
+    }
+    // ── Table 2: Parent adset ──
+    h+=`<div class="sec-head"><span class="sec-title">Ad Set</span><span class="sec-line"></span></div>`;
+    if(fAset&&fAset!=='all'){
+      h+=entityTableHTML('adset',fAset,P)||`<div class="banner warn">No ad set data in this window.</div>`;
+    } else {
+      h+=emptyMetricRow(P);
+    }
+    // ── Table 3: Specific ad (filter-driven) ──
+    h+=`<div class="sec-head"><span class="sec-title">Ad Detail</span><span class="sec-line"></span><span style="font-size:10px;color:var(--ink4);">Select an Ad in the dropdown to populate</span></div>`;
+    if(fAd&&fAd!=='all'){
+      h+=entityTableHTML('ad',fAd,P)||`<div class="banner warn">No ad data in this window.</div>`;
+    } else {
+      h+=emptyMetricRow(P);
+    }
   }
-  if(!h)h=`<div class="empty-state"><div class="empty-ic">🔍</div><div>No data in this window. Adjust anchor date or upload CSVs.</div></div>`;
-  const banner=`<div class="banner ${gran!=='dod'?'warn':''}">📅 <b>${gran.toUpperCase()}</b> · ${numCols} periods · anchor ${anchor}.${gran!=='dod'?' WoW/MoM fills as history accumulates.':''}</div>`;
-  return banner+h;}
+  return h;}
 
 function bindMatrix(){
   $$('.mtx-entityhead[data-ent]').forEach(h=>h.onclick=()=>{const k=h.dataset.ent;openEnts[k]=!openEnts[k];render();});
@@ -1408,7 +1435,7 @@ $('#granSeg').onclick=e=>{if(e.target.dataset.gran){gran=e.target.dataset.gran;$
 $('#numCols').onchange=e=>{numCols=Math.max(4,Math.min(12,parseInt(e.target.value)||7));e.target.value=numCols;render();};
 $('#anchor').onchange=e=>{anchor=e.target.value;render();};
 $('#search').oninput=e=>{search=e.target.value;render();};
-$('#fCampaign').onchange=e=>{fCamp=e.target.value;fAset='all';fAd='all';render();};
+$('#fCampaign').onchange=e=>{fCamp=e.target.value;fAset='all';fAd='all';AGG_DIRTY=true;render();};
 $('#fAdset').onchange=e=>{fAset=e.target.value;fAd='all';render();};
 $('#fAd').onchange=e=>{fAd=e.target.value;render();};
 $('#rowBtn').onclick=()=>{$('#rowPanel').classList.toggle('hide');$('#rowBtn').classList.toggle('on');};
