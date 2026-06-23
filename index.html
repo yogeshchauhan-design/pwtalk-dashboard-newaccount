@@ -468,7 +468,10 @@ let ALL_ROWS=[];
 let view='campaign',gran='dod',numCols=7,anchor='2026-06-18',search='',fCamp='all',fAset='all',fAd='all',acct='new';
 let dataMaxDate='2026-06-18'; // latest date in loaded data; Actionables always anchors here regardless of date picker
 let openEnts={},collapsedGroups={},treeOpen={},actOpen={},actFilter='action',actShowActioned=false,actGrain='adset',actEntFilter='';
-let scFilter='all',scDateFrom='',scDateTo='',scSearch='';
+let scFilter='all',scDateFrom='',scDateTo='',scSearch='',scCamp='all',scAset='all',scAd='all';
+const SC_DEFAULT_CAMPS=['120248957033330732','120229176884230241'];
+let scPinnedCamps=new Set(SC_DEFAULT_CAMPS);
+let SC_HOOK={};
 const $=s=>document.querySelector(s);const $$=s=>document.querySelectorAll(s);
 function adCamp(id){return MAP_AD[id]?.c||'';}
 function adAset(id){return MAP_AD[id]?.as||'';}
@@ -1196,11 +1199,28 @@ function idColsLite(k,id){
 function bindTree(){
   const gs=$('#actGrainSeg');if(gs)gs.onclick=e=>{if(e.target.dataset.grain){actGrain=e.target.dataset.grain;render();}};
   const es=$('#actEntSearch');if(es)es.oninput=e=>{actEntFilter=e.target.value;clearTimeout(window._actSearchT);window._actSearchT=setTimeout(render,250);};
-  // Creative Scorecard filters
+  // Scorecard filters
   const ss=$('#scStatusSeg');if(ss)ss.onclick=e=>{if(e.target.dataset.scf){scFilter=e.target.dataset.scf;render();}};
-  const sf=$('#scFrom');if(sf)sf.onchange=e=>{scDateFrom=e.target.value;render();};
-  const st=$('#scTo');if(st)st.onchange=e=>{scDateTo=e.target.value;render();};
+  const sc=$('#scCampSel');if(sc)sc.onchange=e=>{scCamp=e.target.value;scAset='all';scAd='all';render();};
+  const sa=$('#scAsetSel');if(sa)sa.onchange=e=>{scAset=e.target.value;scAd='all';render();};
+  const sd=$('#scAdSel');if(sd)sd.onchange=e=>{scAd=e.target.value;render();};
   const sch=$('#scSearch');if(sch)sch.oninput=e=>{scSearch=e.target.value;clearTimeout(window._scSearchT);window._scSearchT=setTimeout(render,250);};
+  // Hook/Hold CSV parser
+  const hc=$('#scHookCsv');
+  if(hc&&!hc._bound){hc._bound=true;hc.addEventListener('change',function(e){
+    const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+    rd.onload=ev=>{
+      const lines=ev.target.result.trim().split(/\r?\n/);
+      const H=splitCSV(lines[0]).map(x=>x.trim().replace(/^"|"$/g,''));
+      const gi=names=>{for(const n of names){const i=H.findIndex(h=>h.toLowerCase()===n.toLowerCase());if(i>=0)return i;}return-1;};
+      const iId=gi(['Ad ID','ad_id']),iImp=gi(['Impressions','impressions']),iSec3=gi(['3-Second Video Plays','3_second_video_plays','sec3']),iThru=gi(['Video Plays at 100%','thruplay','ThruPlays','video_p100_watched_actions']);
+      let n=0;
+      for(let i=1;i<lines.length;i++){const v=splitCSV(lines[i]);if(v.length<3)continue;
+        const id=(v[iId]||'').trim().replace(/^"|"$/g,'');if(!id)continue;
+        const N=idx=>{const x=parseFloat((v[idx]||'').trim());return isNaN(x)?0:x;};
+        SC_HOOK[id]={imp:N(iImp),sec3:N(iSec3),thru:N(iThru)};n++;}
+      console.log('Hook/Hold CSV loaded:',n,'rows');
+      e.target.value='';render();};rd.readAsText(f);});}
 }
 function rebuildFilters(){const fc=$('#fCampaign'),fa=$('#fAdset'),fd=$('#fAd');
   fc.innerHTML='<option value="all">All Campaigns</option>';Object.keys(MAP_CAMP).filter(id=>acct==='both'||MAP_CAMP[id].acct===acct).forEach(id=>{const o=document.createElement('option');o.value=id;o.textContent=MAP_CAMP[id].s;if(id===fCamp)o.selected=true;fc.appendChild(o);});
@@ -1250,155 +1270,234 @@ $('#perfCsv').addEventListener('change',function(e){const files=[...e.target.fil
 // Independent FATIGUING badge: CTR falling AND CPT rising ≥20% AND CAC rising ≥20%
 // Only shows ads active OR with spend in last 2 days
 // ═══════════════════════════════════════════════════════════
-function creativeFlagAndFatigue(adId,dateFrom,dateTo){
-  // windows relative to anchor (which is always dataMaxDate here)
-  const _anch=anchor; // scorecard always uses dataMaxDate
-  const toDate=dateTo||_anch;
-  const fromDate=dateFrom||'2000-01-01';
-  // recent 2 days spend gate
-  const r2from=isoBack(1);
+// ═══════════════════════════════════════════════════════════
+// CREATIVE SCORECARD v2
+// ═══════════════════════════════════════════════════════════
+function creativeFlagAndFatigue(adId){
+  // Always evaluate against dataMaxDate
+  const _anch=dataMaxDate;
+  // ── (2) Last-60-day window only ──
+  const win60from=isoBack_abs(_anch,59), win60to=_anch;
+  const life60=aggRangeFor(win60from,win60to,'ad',adId);
+  if(life60.cost<1000)return null; // (2) ₹1000 gate in last 60 days
+  // ── Recent spend: last 2 days ──
+  const r2from=isoBack_abs(_anch,1);
   const r2=aggRangeFor(r2from,_anch,'ad',adId);
   const recentSpend=r2.cost;
-  // lifetime window (filtered by date picker)
-  const life=aggRangeFor(fromDate,toDate,'ad',adId);
-  if(life.cost===0&&recentSpend===0)return null; // never spent
-  // maturity check (same logic as Actionables)
-  const matCut=isoBack(ACT.matureDays);
-  const cohortAll=aggRangeFor(fromDate,matCut,'ad',adId);
+  // ── Maturity / CAC ──
+  const matCut=isoBack_abs(_anch,ACT.matureDays);
+  const cohort60=aggRangeFor(win60from,matCut,'ad',adId);
   const firstSpend=(function(){const rs=ALL_ROWS.filter(r=>r.ad_id===adId&&r.cost>0).map(r=>r.date).sort();return rs[0]||null;})();
-  const maturedDays=firstSpend?Math.max(0,daysBetween(matCut,firstSpend)):0;
-  const matured=maturedDays>=7&&cohortAll.cost>0;
-  const ap_all=projAutopaysFor(fromDate,matCut,'ad',adId);
-  const cac=ap_all&&matured?cohortAll.cost/ap_all:null;
-  const lifeT28=life.d0*EST.d28;
-  const cpt=lifeT28?life.cost/lifeT28:null;
-  // current vs prior week for fatigue
-  const wkCur=aggRangeFor(isoBack(6),_anch,'ad',adId);
-  const wkPrev=aggRangeFor(isoBack(13),isoBack(7),'ad',adId);
-  const ctrCur=wkCur.impressions?wkCur.clicks/wkCur.impressions*100:null;
-  const ctrPrev=wkPrev.impressions?wkPrev.clicks/wkPrev.impressions*100:null;
-  const cptCurW=wkCur.d0*EST.d28?wkCur.cost/(wkCur.d0*EST.d28):null;
-  const cptPrevW=wkPrev.d0*EST.d28?wkPrev.cost/(wkPrev.d0*EST.d28):null;
-  const apCurW=projAutopaysFor(isoBack(6),_anch,'ad',adId);
-  const apPrevW=projAutopaysFor(isoBack(13),isoBack(7),'ad',adId);
-  const cacCurW=apCurW&&wkCur.cost?wkCur.cost/apCurW:null;
-  const cacPrevW=apPrevW&&wkPrev.cost?wkPrev.cost/apPrevW:null;
-  // ── FATIGUING BADGE — independent of flag ──
-  // All three must fire: CTR dropping AND CPT rising ≥20% AND CAC rising ≥20%
-  const ctrDrop=ctrCur!=null&&ctrPrev!=null&&ctrPrev>0&&ctrCur<ctrPrev;
-  const cptRise=cptCurW!=null&&cptPrevW!=null&&cptPrevW>0&&(cptCurW-cptPrevW)/cptPrevW>=0.20;
-  const cacRise=cacCurW!=null&&cacPrevW!=null&&cacPrevW>0&&(cacCurW-cacPrevW)/cacPrevW>=0.20;
-  const fatiguing=ctrDrop&&cptRise&&cacRise;
-  const fatigueDetail=fatiguing?`CTR↓${ctrPrev>0?((ctrCur-ctrPrev)/ctrPrev*100).toFixed(0):'?'}% · CPT↑${cptPrevW>0?((cptCurW-cptPrevW)/cptPrevW*100).toFixed(0):'?'}% · CAC↑${cacPrevW>0?((cacCurW-cacPrevW)/cacPrevW*100).toFixed(0):'?'}%`:'';
-  // ── FLAG ──
+  const maturedDays=firstSpend?Math.max(0,daysBetween_abs(matCut,firstSpend)):0;
+  const matured=maturedDays>=7&&cohort60.cost>0;
+  const ap_60=projAutopaysFor(win60from,matCut,'ad',adId);
+  // ── (4) CAC only when ≥20 matured trials ──
+  const minTrialsCac=20;
+  const cacTrials=cohort60.trials||0;
+  const cac=(matured&&ap_60>0&&cacTrials>=minTrialsCac)?cohort60.cost/ap_60:null;
+  const cacLowBase=(matured&&ap_60>0&&cacTrials>0&&cacTrials<minTrialsCac);
+  // ── CPT (D28 est, last-60d window) ──
+  const lifeT28=life60.d0*EST.d28;
+  const cpt=lifeT28?life60.cost/lifeT28:null;
+  // ── (7) FIXED FLAG LOGIC ──
   let flag,label;
   if(recentSpend===0){flag='paused';label='PAUSED';}
   else if(matured&&cac!=null&&cac<=T.cac.g){flag='winner';label='WINNER';}
   else if(!matured&&cpt!=null&&cpt<=ACT.cptScale){flag='pwinner';label='POTENTIAL WINNER';}
-  else if((cpt!=null&&cpt>ACT.cptScale&&cpt<=T.cpt.a)||(cac!=null&&cac>T.cac.g&&cac<=T.cac.a)){flag='monitor';label='MONITOR';}
-  else{flag='monitor';label='MONITOR';}
-  // Meta video data
-  const mv=META_AD[adId];
-  const hook=mv&&mv.sec3&&mv.imp?mv.sec3/mv.imp*100:null;
-  const p50=mv&&mv.p50&&mv.imp?mv.p50/mv.imp*100:null;
-  const p100=mv&&mv.p100&&mv.imp?mv.p100/mv.imp*100:null;
-  return{adId,flag,label,fatiguing,fatigueDetail,recentSpend,matured,cac,cpt,
-    spend:life.cost,trials:life.trials,ctrCur,ctrPrev,cptCurW,cptPrevW,cacCurW,cacPrevW,hook,p50,p100,
+  else if(cpt!=null&&cpt>ACT.cptScale&&cpt<=T.cpt.a){flag='monitor';label='MONITOR';}
+  else if(cac!=null&&cac>T.cac.g&&cac<=T.cac.a){flag='monitor';label='MONITOR';}
+  else if(cpt!=null&&cpt>T.cpt.a){flag='monitor';label='MONITOR (CPT>₹200)';}
+  else if(cac!=null&&cac>T.cac.a){flag='monitor';label='MONITOR (CAC>₹500)';}
+  else{flag='monitor';label='MONITOR (building)';}
+  // ── Fatigue: CTR falling AND CPT rising ≥20% AND CAC rising ≥20% ──
+  const wkCur=aggRangeFor(isoBack_abs(_anch,6),_anch,'ad',adId);
+  const wkPrev=aggRangeFor(isoBack_abs(_anch,13),isoBack_abs(_anch,7),'ad',adId);
+  const ctrCur=wkCur.impressions?wkCur.clicks/wkCur.impressions*100:null;
+  const ctrPrev=wkPrev.impressions?wkPrev.clicks/wkPrev.impressions*100:null;
+  const cptCurW=(wkCur.d0*EST.d28)?wkCur.cost/(wkCur.d0*EST.d28):null;
+  const cptPrevW=(wkPrev.d0*EST.d28)?wkPrev.cost/(wkPrev.d0*EST.d28):null;
+  const apCurW=projAutopaysFor(isoBack_abs(_anch,6),_anch,'ad',adId);
+  const apPrevW=projAutopaysFor(isoBack_abs(_anch,13),isoBack_abs(_anch,7),'ad',adId);
+  const cacCurW=(apCurW&&wkCur.cost)?wkCur.cost/apCurW:null;
+  const cacPrevW=(apPrevW&&wkPrev.cost)?wkPrev.cost/apPrevW:null;
+  const ctrDrop=ctrCur!=null&&ctrPrev!=null&&ctrPrev>0&&ctrCur<ctrPrev;
+  const cptRise=cptCurW!=null&&cptPrevW!=null&&cptPrevW>0&&(cptCurW-cptPrevW)/cptPrevW>=0.20;
+  const cacRise=cacCurW!=null&&cacPrevW!=null&&cacPrevW>0&&(cacCurW-cacPrevW)/cacPrevW>=0.20;
+  const fatiguing=ctrDrop&&cptRise&&cacRise;
+  const fatigueDetail=fatiguing?`CTR↓${ctrPrev>0?Math.abs(((ctrCur-ctrPrev)/ctrPrev*100).toFixed(0)):'?'}% CPT↑${cptPrevW>0?((cptCurW-cptPrevW)/cptPrevW*100).toFixed(0):'?'}% CAC↑${cacPrevW>0?((cacCurW-cacPrevW)/cacPrevW*100).toFixed(0):'?'}%`:'';
+  // ── (3) Last-3-days individual data ──
+  const d1=aggRangeFor(isoBack_abs(_anch,0),isoBack_abs(_anch,0),'ad',adId);
+  const d2=aggRangeFor(isoBack_abs(_anch,1),isoBack_abs(_anch,1),'ad',adId);
+  const d3=aggRangeFor(isoBack_abs(_anch,2),isoBack_abs(_anch,2),'ad',adId);
+  function dayCpt(d){return(d.d0*EST.d28)?d.cost/(d.d0*EST.d28):null;}
+  function dayCtr(d){return d.impressions?d.clicks/d.impressions*100:null;}
+  // ── (6) Hook/Hold from uploaded CSV ──
+  const hd=SC_HOOK[adId];
+  const hookRate=hd&&hd.imp?hd.sec3/hd.imp*100:null;
+  const holdRate=hd&&hd.sec3?hd.thru/hd.sec3*100:null;
+  // ── (8) AR% W1/W2/W3 (matured cohorts only, D28 trials / D35 autopays projected) ──
+  function arWindow(daysFrom,daysTo){
+    const f=isoBack_abs(_anch,daysFrom), t=isoBack_abs(_anch,daysTo);
+    const agg=aggRangeFor(f,t,'ad',adId);
+    const ap=projAutopaysFor(f,t,'ad',adId,'D35');
+    const t28=agg.d0*EST.d28;
+    if(!t28||!ap)return null;
+    return ap/t28*100;
+  }
+  const arW1=arWindow(ACT.matureDays+7, ACT.matureDays);    // 1 matured week
+  const arW2=arWindow(ACT.matureDays+14, ACT.matureDays+7); // 2nd matured week
+  const arW3=arWindow(ACT.matureDays+21, ACT.matureDays+14);// 3rd matured week
+  return{adId,flag,label,fatiguing,fatigueDetail,recentSpend,matured,cac,cacLowBase,cacTrials,cpt,
+    spend:life60.cost,trials:life60.trials,
+    ctrCur,ctrPrev,cptCurW,cptPrevW,cacCurW,cacPrevW,
+    hookRate,holdRate,
+    arW1,arW2,arW3,
+    d1Spend:d1.cost,d2Spend:d2.cost,d3Spend:d3.cost,
+    d1Cpt:dayCpt(d1),d2Cpt:dayCpt(d2),d3Cpt:dayCpt(d3),
+    d1Ctr:dayCtr(d1),d2Ctr:dayCtr(d2),d3Ctr:dayCtr(d3),
     campId:adCamp(adId),asId:adAset(adId),adNm:MAP_AD[adId]?.s||adId};}
+// date helpers that take an explicit anchor (don't rely on global)
+function isoBack_abs(anchorDate,days){const d=new Date(anchorDate);d.setDate(d.getDate()-days);return d.toISOString().split('T')[0];}
+function daysBetween_abs(a,b){return Math.round((new Date(a)-new Date(b))/86400000);}
 const SC_RANK={winner:0,pwinner:1,monitor:2,paused:3};
 function vScorecard(){
-  if(!isNewView())return'<div class="banner warn">🏆 Creative Scorecard is Meta-only (New account). Switch account to New or Both.</div>';
-  if(ALL_ROWS.length===0)return'<div class="empty-state"><div class="empty-ic">🏆</div><div style="font-size:13px;font-weight:600;margin-bottom:6px;">No performance data loaded</div><div style="font-size:11px;color:var(--ink4);">Upload your Mapping + Performance CSVs first.</div></div>';
   const _saved=anchor;anchor=dataMaxDate;
   try{return vScorecardInner();}finally{anchor=_saved;}
 }
 function vScorecardInner(){
-  // collect all Meta ads (New account)
-  const adIds=Object.keys(MAP_AD).filter(id=>MAP_AD[id].acct==='new');
+  if(ALL_ROWS.length===0)return'<div class="empty-state"><div class="empty-ic">🏆</div><div style="font-size:13px;font-weight:600;margin-bottom:6px;">No performance data loaded</div><div style="font-size:11px;color:var(--ink4);">Upload your Mapping + Performance CSVs first.</div></div>';
+  // ── (1) Build candidate ad list from pinned campaigns ──
+  const pinnedArr=[...scPinnedCamps];
+  let adIds=Object.keys(MAP_AD).filter(id=>{
+    const cid=adCamp(id);
+    if(!pinnedArr.includes(cid))return false;
+    // (5) campaign/adset/ad filters
+    if(scCamp!=='all'&&cid!==scCamp)return false;
+    if(scAset!=='all'&&adAset(id)!==scAset)return false;
+    if(scAd!=='all'&&id!==scAd)return false;
+    return true;
+  });
+  // search filter
+  if(scSearch){const q=scSearch.toLowerCase();adIds=adIds.filter(id=>{const hay=(MAP_AD[id]?.s||'')+' '+id+' '+(MAP_ASET[adAset(id)]?.s||'')+' '+(MAP_CAMP[adCamp(id)]?.s||'');return hay.toLowerCase().includes(q);});}
   let rows=[];
   adIds.forEach(id=>{
-    const r=creativeFlagAndFatigue(id,scDateFrom||'2000-01-01',scDateTo||anchor);
-    if(!r)return;
-    // show only active or last-2d spend > 0
-    const r2=aggRangeFor(isoBack(1),anchor,'ad',id);
-    const life=aggRangeFor(scDateFrom||'2000-01-01',scDateTo||anchor,'ad',id);
-    if(r2.cost===0&&life.cost===0)return;
-    // status filter
+    const r=creativeFlagAndFatigue(id);
+    if(!r)return; // spend gate failed
     if(scFilter!=='all'&&r.flag!==scFilter)return;
-    // search filter
-    if(scSearch){const q=scSearch.toLowerCase();const hay=(r.adNm+' '+id+' '+(MAP_ASET[r.asId]?.s||'')+' '+(MAP_CAMP[r.campId]?.s||'')).toLowerCase();if(!hay.includes(q))return;}
     rows.push(r);
   });
   rows.sort((a,b)=>SC_RANK[a.flag]-SC_RANK[b.flag]||b.spend-a.spend);
-  // summary counts
+  // counts
   const counts={winner:0,pwinner:0,monitor:0,paused:0,fatigue:0};
   rows.forEach(r=>{counts[r.flag]=(counts[r.flag]||0)+1;if(r.fatiguing)counts.fatigue++;});
-  let h=`<div class="banner">🏆 Creative Scorecard · Meta New Account · Ad level only. Only ads with spend in last 2 days or active history shown. Fatigue = CTR↓ + CPT↑≥20% + CAC↑≥20% (rolling WoW). CAC maturity requires ≥8 days of cohort history.</div>`;
+  // ── Pinned campaigns manager ──
+  const allCamps=Object.keys(MAP_CAMP);
+  let h=`<div class="banner">🏆 Creative Scorecard · Pinned campaigns only · Last 60 days · Min ₹1,000 spend gate · CAC shown only when ≥20 matured trials · Hook/Hold from uploaded CSV.</div>`;
+  // pinned camps manager
+  h+=`<div style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:14px;">
+    <div style="font-size:11px;font-weight:700;color:var(--ink2);margin-bottom:8px;">📌 Pinned Campaigns <span style="font-size:9px;color:var(--ink4);font-weight:400;">(scorecard shows only these)</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">`;
+  [...scPinnedCamps].forEach(cid=>{
+    const cnm=MAP_CAMP[cid]?.s||cid;
+    const isDefault=SC_DEFAULT_CAMPS.includes(cid);
+    h+=`<span style="display:inline-flex;align-items:center;gap:5px;background:var(--brandbg);border:1px solid rgba(99,86,240,.2);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:600;color:var(--brand);" title="${cid}">${cnm.slice(0,30)}${cnm.length>30?'…':''} ${isDefault?'<span style="font-size:8px;color:var(--ink4)">(default)</span>':''} <span style="cursor:pointer;color:var(--bad);font-weight:800;margin-left:2px;" onclick="scPinnedCamps.delete('${cid}');render()">✕</span></span>`;
+  });
+  // add campaign dropdown
+  const unpinned=allCamps.filter(c=>!scPinnedCamps.has(c));
+  if(unpinned.length){
+    h+=`<select style="font-size:10px;padding:4px 8px;border:1px solid var(--line2);border-radius:6px;color:var(--ink2);background:var(--panel);" onchange="if(this.value){scPinnedCamps.add(this.value);render();}this.value='';">
+      <option value="">+ Add campaign…</option>`;
+    unpinned.forEach(c=>{h+=`<option value="${c}">${(MAP_CAMP[c]?.s||c).slice(0,40)}</option>`;});
+    h+=`</select>`;
+  }
+  h+=`</div></div>`;
   // summary cards
   h+=`<div class="act-summary">
     <div class="sum-card green"><div class="sum-big">${counts.winner}</div><div class="sum-label">Winner</div><div class="sum-detail">CAC ≤ ₹450</div></div>
-    <div class="sum-card neutral" style="--ink4:var(--info)"><div class="sum-big" style="color:var(--info)">${counts.pwinner}</div><div class="sum-label">Potential Winner</div><div class="sum-detail">CPT ≤ ₹120, CAC building</div></div>
+    <div class="sum-card neutral"><div class="sum-big" style="color:var(--info)">${counts.pwinner}</div><div class="sum-label">Potential Winner</div><div class="sum-detail">CPT ≤ ₹120, CAC building</div></div>
     <div class="sum-card mod"><div class="sum-big">${counts.monitor}</div><div class="sum-label">Monitor</div><div class="sum-detail">CPT ₹120–200 or CAC ₹450–500</div></div>
-    <div class="sum-card red"><div class="sum-big">${counts.fatigue}</div><div class="sum-label">Fatiguing</div><div class="sum-detail">CTR↓ CPT↑≥20% CAC↑≥20%</div></div>
+    <div class="sum-card red"><div class="sum-big">${counts.fatigue}</div><div class="sum-label">Fatiguing</div><div class="sum-detail">CTR↓ + CPT↑≥20% + CAC↑≥20%</div></div>
   </div>`;
-  // filter bar
+  // ── (5) filter bar — own campaign/adset/ad dropdowns ──
+  const scCampOpts=pinnedArr.map(c=>`<option value="${c}" ${scCamp===c?'selected':''}>${(MAP_CAMP[c]?.s||c).slice(0,35)}</option>`).join('');
+  const asInScope=Object.keys(MAP_ASET).filter(a=>scCamp==='all'?pinnedArr.includes(MAP_ASET[a]?.c):MAP_ASET[a]?.c===scCamp);
+  const scAsetOpts=asInScope.map(a=>`<option value="${a}" ${scAset===a?'selected':''}>${MAP_ASET[a]?.s||a}</option>`).join('');
+  const adInScope=Object.keys(MAP_AD).filter(id=>pinnedArr.includes(adCamp(id))&&(scCamp==='all'||adCamp(id)===scCamp)&&(scAset==='all'||adAset(id)===scAset));
+  const scAdOpts=adInScope.map(id=>`<option value="${id}" ${scAd===id?'selected':''}>${MAP_AD[id]?.s||id}</option>`).join('');
   h+=`<div class="cs-filter-bar">
     <span class="ctrl-label">Status</span>
     <div class="seg" id="scStatusSeg">
       <button class="seg-btn ${scFilter==='all'?'on':''}" data-scf="all">All</button>
       <button class="seg-btn ${scFilter==='winner'?'on':''}" data-scf="winner">Winner</button>
-      <button class="seg-btn ${scFilter==='pwinner'?'on':''}" data-scf="pwinner">Potential Winner</button>
+      <button class="seg-btn ${scFilter==='pwinner'?'on':''}" data-scf="pwinner">Pot. Winner</button>
       <button class="seg-btn ${scFilter==='monitor'?'on':''}" data-scf="monitor">Monitor</button>
       <button class="seg-btn ${scFilter==='paused'?'on':''}" data-scf="paused">Paused</button>
     </div>
-    <span class="ctrl-label" style="margin-left:8px;">Date</span>
-    <input type="date" class="date-mini" id="scFrom" value="${scDateFrom}" placeholder="From">
-    <input type="date" class="date-mini" id="scTo" value="${scDateTo}" placeholder="To">
-    <div class="search-box" style="min-width:200px;"><input id="scSearch" placeholder="Search ad / ad set / campaign…" value="${scSearch.replace(/"/g,'&quot;')}"></div>
+    <select class="fsel" id="scCampSel"><option value="all">All Pinned Campaigns</option>${scCampOpts}</select>
+    <select class="fsel" id="scAsetSel"><option value="all">All Ad Sets</option>${scAsetOpts}</select>
+    <select class="fsel" id="scAdSel"><option value="all">All Ads</option>${scAdOpts}</select>
+    <div class="search-box" style="min-width:180px;"><input id="scSearch" placeholder="Search ad / adset / campaign…" value="${scSearch.replace(/"/g,'&quot;')}"></div>
+    <label class="chip" style="border-color:#3a7d3a;color:#3a7d3a;font-size:10px;">📊 Hook/Hold CSV<input type="file" accept=".csv" id="scHookCsv" style="display:none;"></label>
   </div>`;
-  if(!rows.length){h+=`<div class="empty-state"><div class="empty-ic">🔍</div><div>No creatives match the current filters.</div></div>`;return h;}
-  // table
+  if(!rows.length){h+=`<div class="empty-state"><div class="empty-ic">🔍</div><div>No creatives match current filters.<br><span style="font-size:11px;color:var(--ink4);">Check pinned campaigns or relax filters. Min ₹1,000 spend in last 60 days required.</span></div></div>`;return h;}
+  // ── Table ──
+  const mn=(s,id)=>`<div class="ent-nm" title="${s||id}">${(s||id).slice(0,28)}${(s||id).length>28?'…':''}</div><div class="ent-id">${id}</div>`;
   h+=`<div class="act-tbl-wrap"><div class="act-tbl-scroll"><table class="act led"><thead>
     <tr class="led-grouphead">
-      <th class="led-c-col l" rowspan="2">Ad Name</th>
+      <th class="led-c-col l" rowspan="2">Ad</th>
       <th class="l" rowspan="2">Ad Set</th>
       <th class="l" rowspan="2">Campaign</th>
       <th rowspan="2">Flag</th>
       <th rowspan="2">Fatigue</th>
-      <th class="grp-div" colspan="3">Outcome</th>
-      <th class="grp-div" colspan="2">Video (Meta)</th>
-      <th class="grp-div" colspan="2">CTR trend</th>
-      <th class="grp-div" colspan="2">CPT trend (W)</th>
-      <th class="grp-div" colspan="2">CAC trend (W)</th>
+      <th class="grp-div" colspan="3">Spend (D-1/D-2/D-3)</th>
+      <th class="grp-div" colspan="3">CPT D28-adj (D-1/D-2/D-3)</th>
+      <th class="grp-div" colspan="3">CTR % (D-1/D-2/D-3)</th>
+      <th class="grp-div">Total<br>60d</th>
+      <th>CPT<br>60d</th>
+      <th>CAC<br>matured</th>
+      <th class="grp-div">Hook%</th>
+      <th>Hold%</th>
+      <th class="grp-div" colspan="3">AR% (D28T÷D35AP)</th>
     </tr>
     <tr class="led-subhead">
-      <th class="grp-div">Spend</th><th>CPT (D28)</th><th>CAC (proj)</th>
-      <th class="grp-div">Hook%</th><th>50% View</th>
-      <th class="grp-div">L7</th><th>W-1</th>
-      <th class="grp-div">L7</th><th>W-1</th>
-      <th class="grp-div">L7</th><th>W-1</th>
+      <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
+      <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
+      <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
+      <th class="grp-div">₹</th><th>₹</th><th>₹</th>
+      <th class="grp-div">%</th><th>%</th>
+      <th class="grp-div">W-1</th><th>W-2</th><th>W-3</th>
     </tr></thead><tbody>`;
   rows.forEach(r=>{
     const flagBadge=`<span class="cs-badge csb-${r.flag}">${r.label}</span>`;
-    const fatigBadge=r.fatiguing?`<span class="cs-badge csb-fatigue" title="${r.fatigueDetail}">⚠ FATIGUING</span>`:'<span style="color:var(--ink4);font-size:10px;">—</span>';
-    const nm=(s,id)=>`<div class="ent-nm" title="${s}">${s}</div><div class="ent-id">${id}</div>`;
-    h+=`<tr class="led-row flag-l-${r.flag==='winner'?'green':r.flag==='pwinner'?'green':r.flag==='monitor'?'mod':''}">
-      <td class="led-id led-c-col">${nm(r.adNm,r.adId)}</td>
-      <td class="led-id">${nm(MAP_ASET[r.asId]?.s||r.asId,r.asId)}</td>
-      <td class="led-id">${nm(MAP_CAMP[r.campId]?.s||r.campId,r.campId)}</td>
+    const fatigBadge=r.fatiguing?`<span class="cs-badge csb-fatigue" title="${r.fatigueDetail}">⚠ FATIGUE</span>`:'<span style="color:var(--ink4);font-size:9px;">—</span>';
+    const cacDisp=r.cac!=null?`<div class="cell val-${cls(r.cac,T.cac.g,T.cac.a,0)}">${moneyc(r.cac)}</div>`:r.cacLowBase?`<div class="cell lowbase">thin<span class="lowbase-tag">n${r.cacTrials}</span></div>`:'<div class="cell" style="color:var(--ink4);font-size:9px;">immature</div>';
+    const arCell=v=>v!=null?`<div class="cell val-${cls(v,T.apr.g,T.apr.a,1)}">${v.toFixed(1)}%</div>`:'<div class="cell">—</div>';
+    const hookDisp=r.hookRate!=null?`<div class="cell val-${cls(r.hookRate,T.hook.g,T.hook.a,1)}">${r.hookRate.toFixed(1)}%</div>`:'<div class="cell" style="color:var(--ink4);font-size:9px;">upload CSV</div>';
+    const holdDisp=r.holdRate!=null?`<div class="cell val-${cls(r.holdRate,T.hold.g,T.hold.a,1)}">${r.holdRate.toFixed(1)}%</div>`:'<div class="cell" style="color:var(--ink4);font-size:9px;">—</div>';
+    const flc=r.flag==='winner'?'green':r.flag==='pwinner'?'green':r.flag==='monitor'?'mod':'';
+    h+=`<tr class="led-row ${flc?'flag-l-'+flc:''}">
+      <td class="led-id led-c-col">${mn(r.adNm,r.adId)}</td>
+      <td class="led-id">${mn(MAP_ASET[r.asId]?.s,r.asId)}</td>
+      <td class="led-id">${mn(MAP_CAMP[r.campId]?.s,r.campId)}</td>
       <td><div class="cell">${flagBadge}</div></td>
       <td><div class="cell">${fatigBadge}</div></td>
+      <td class="grp-div">${dirCell(r.d1Spend,r.d2Spend,false,moneyc)}</td>
+      <td>${dirCell(r.d2Spend,r.d3Spend,false,moneyc)}</td>
+      <td><div class="cell">${moneyc(r.d3Spend)}</div></td>
+      <td class="grp-div">${dirCell(r.d1Cpt,r.d2Cpt,true,moneyc)}</td>
+      <td>${dirCell(r.d2Cpt,r.d3Cpt,true,moneyc)}</td>
+      <td>${cptCell(r.d3Cpt)}</td>
+      <td class="grp-div">${dirCell(r.d1Ctr,r.d2Ctr,false,v=>v!=null?v.toFixed(2)+'%':'—')}</td>
+      <td>${dirCell(r.d2Ctr,r.d3Ctr,false,v=>v!=null?v.toFixed(2)+'%':'—')}</td>
+      <td><div class="cell ${r.d3Ctr!=null?'val-'+cls(r.d3Ctr,T.ctr.g,T.ctr.a,1):''}">${r.d3Ctr!=null?r.d3Ctr.toFixed(2)+'%':'—'}</div></td>
       <td class="grp-div"><div class="cell">${moneyc(r.spend)}</div></td>
       <td>${cptCell(r.cpt)}</td>
-      <td>${r.cac!=null?cacCell(r.cac,false,0):'<div class="cell" style="color:var(--ink4);font-size:9px;">immature</div>'}</td>
-      <td class="grp-div"><div class="cell val-${r.hook!=null?cls(r.hook,T.hook.g,T.hook.a,1):''}">${r.hook!=null?r.hook.toFixed(1)+'%':'—'}</div></td>
-      <td><div class="cell">${r.p50!=null?r.p50.toFixed(1)+'%':'—'}</div></td>
-      <td class="grp-div">${dirCell(r.ctrCur,r.ctrPrev,false,v=>v!=null?v.toFixed(2)+'%':'—')}</td>
-      <td><div class="cell val-${r.ctrPrev!=null?cls(r.ctrPrev,T.ctr.g,T.ctr.a,1):''}">${r.ctrPrev!=null?r.ctrPrev.toFixed(2)+'%':'—'}</div></td>
-      <td class="grp-div">${dirCell(r.cptCurW,r.cptPrevW,true,moneyc)}</td>
-      <td>${cptCell(r.cptPrevW)}</td>
-      <td class="grp-div">${r.cacCurW!=null?dirCell(r.cacCurW,r.cacPrevW,true,moneyc):'<div class="cell" style="color:var(--ink4);font-size:9px;">immature</div>'}</td>
-      <td>${r.cacPrevW!=null?cacCell(r.cacPrevW,false,0):'<div class="cell">—</div>'}</td>
+      <td>${cacDisp}</td>
+      <td class="grp-div">${hookDisp}</td>
+      <td>${holdDisp}</td>
+      <td class="grp-div">${arCell(r.arW1)}</td>
+      <td>${arCell(r.arW2)}</td>
+      <td>${arCell(r.arW3)}</td>
     </tr>`;
   });
   h+=`</tbody></table></div></div>`;
