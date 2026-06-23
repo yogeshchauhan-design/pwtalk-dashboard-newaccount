@@ -290,16 +290,14 @@ table.act.led{font-size:10px;}
     <span class="acct-badge badge-new" id="acctBadge">NEW ACCOUNT</span>
     <div class="topbar-right">
       <span class="updated" id="updated">Upload CSVs to load data</span>
-      <label class="chip map-btn">🗂 Mapping CSV<input type="file" accept=".csv" id="mapCsv" style="display:none;"></label>
+      <label class="chip map-btn">🗂 Mapping CSV<input type="file" accept=".csv" id="mapCsv" multiple style="display:none;"></label>
       <label class="chip">📂 Performance CSV<input type="file" accept=".csv" id="perfCsv" multiple style="display:none;"></label>
-      <label class="chip" style="border-color:#3a7d3a;color:#3a7d3a;">🟢 Google Map CSV<input type="file" accept=".csv" id="gmapCsv" style="display:none;"></label>
-      <label class="chip" style="border-color:#3a7d3a;color:#3a7d3a;">🟢 Google Perf CSV<input type="file" accept=".csv" id="gperfCsv" multiple style="display:none;"></label>
     </div>
   </div>
   <div class="wrap">
     <div class="upload-status">
-      <div class="us-card"><span class="us-icon">🗂</span><div><div class="us-title">Mapping CSV</div><div class="us-sub" id="mapStat">Not loaded — upload ID_Data_CampaignLevel.csv</div></div><span class="us-dot no" id="mapDot"></span></div>
-      <div class="us-card"><span class="us-icon">📂</span><div><div class="us-title">Performance CSV</div><div class="us-sub" id="perfStat">Not loaded — upload AppsFlyer CSV(s)</div></div><span class="us-dot no" id="perfDot"></span></div>
+      <div class="us-card"><span class="us-icon">🗂</span><div><div class="us-title">Mapping CSV (Meta + Google)</div><div class="us-sub" id="mapStat">Not loaded — upload Meta &amp; Google mapping CSVs (multi-select OK)</div></div><span class="us-dot no" id="mapDot"></span></div>
+      <div class="us-card"><span class="us-icon">📂</span><div><div class="us-title">Performance CSV (Meta + Google)</div><div class="us-sub" id="perfStat">Not loaded — upload Meta Ad-level &amp; Google Adset-level CSVs (multi-select OK)</div></div><span class="us-dot no" id="perfDot"></span></div>
       <div class="meta-info"><span class="us-icon">📡</span><div><div class="us-title">Meta Data (New Acct)</div><div class="us-sub">Jun 1–18 2026 · Pulled live · Video + Placement + Demo</div></div><span class="us-dot ok"></span></div>
     </div>
     <div class="ctrlbar">
@@ -477,7 +475,7 @@ function adCamp(id){return MAP_AD[id]?.c||'';}
 function adAset(id){return MAP_AD[id]?.as||'';}
 function adAcct(id){return MAP_AD[id]?.acct||classifyAcct(id);}
 function adSource(id){return MAP_AD[id]?.source||'facebook';} // #8 hook: Google rows will set source='google'
-function inAcctFilter(id){return acct==='both'||adAcct(id)===acct;}
+function inAcctFilter(id){if(acct==='both')return true;const _a=adAcct(id);return _a===acct;}
 function isNewView(){return acct==='new'||acct==='both';}
 function passEntity(r){if(!inAcctFilter(r.ad_id))return false;const c=adCamp(r.ad_id),a=adAset(r.ad_id);
   if(fCamp!=='all'&&c!==fCamp)return false;if(fAset!=='all'&&a!==fAset)return false;if(fAd!=='all'&&r.ad_id!==fAd)return false;
@@ -605,7 +603,7 @@ function updateAcctUI(){
   ['creative','placement','demo'].forEach(v=>{const n=document.querySelector(`.nav-item[data-view="${v}"]`);if(n){n.style.opacity=acct==='old'?'0.4':'1';n.style.pointerEvents=acct==='old'?'none':'auto';}});}
 function render(){updateAcctUI();rebuildFilters();const c=$('#views');
   if(ALL_ROWS.length===0&&(view==='campaign'||view==='adset'||view==='ad'||view==='actions')){
-    c.innerHTML='<div class="empty-state"><div class="empty-ic">📂</div><div style="font-size:13px;font-weight:600;margin-bottom:6px;">No performance data loaded</div><div style="font-size:11px;color:var(--ink4);">1. Upload the Mapping CSV (ID_Data_CampaignLevel.csv) via 🗂 button<br>2. Upload your AppsFlyer CSV files (multiple allowed) via 📂 button<br>3. Data will auto-route: ID ending 732 → New account · else → Old</div></div>';return;}
+    c.innerHTML='<div class="empty-state"><div class="empty-ic">📂</div><div style="font-size:13px;font-weight:600;margin-bottom:6px;">No performance data loaded</div><div style="font-size:11px;color:var(--ink4);">1. Upload Mapping CSV(s) via 🗂 — supports Meta and Google in one multi-select<br>2. Upload Performance CSV(s) via 📂 — Meta ad-level and Google adset-level auto-detected<br>3. Google data: select <b>Google (UAC)</b> or <b>Both</b> in account dropdown</div></div>';return;}
   if(view==='campaign'||view==='adset'||view==='ad')c.innerHTML=vMatrix(view);
   else if(view==='creative')c.innerHTML=isNewView()?vCreative():naMeta('Video Metrics');
   else if(view==='placement')c.innerHTML=isNewView()?vPlacement():naMeta('Placements');
@@ -619,128 +617,200 @@ function videoVal(e,type){
   if(key==='campaign'){const m=META_CAMP[id];if(!m||!m.sec3)return null;if(type==='hook')return m.sec3/m.imp*100;if(type==='hold')return m.sec3>0?m.thru/m.sec3*100:null;}
   if(key==='adset'){const m=META_ASET[id];if(!m||!m.sec3)return null;if(type==='hook')return m.sec3/m.imp*100;if(type==='hold')return m.sec3>0?m.thru/m.sec3*100:null;}
   return null;}
-// ═══ PORTFOLIO ROLLUP (overall marketing view) ═══
-function portfolioMatrixHTML(){
-  const P=periods();
-  const sums=P.map(p=>aggPortfolio(p.from,p.to));
-  const latest=sums[0];
-  const latestCPT=latest.trials?latest.cost/latest.trials:null;
-  // count active entities in latest period
-  let html=`<div class="matrix-card portfolio"><div class="mtx-entityhead portfolio-head" style="cursor:default;">
-    <span style="width:12px;"></span>
-    <span class="tag" style="background:var(--brand);color:#fff;">PORTFOLIO</span>
-    <span style="font-weight:800;font-size:14px;">All Campaigns — Combined</span>
-    <span style="font-size:9.5px;color:var(--ink3);font-family:var(--m);margin-left:2px;">${acct==='new'?'New acct':acct==='old'?'Old acct':'Both accounts'} · blended</span>
-    ${latestCPT?`<span class="ent-cpt" style="background:var(--${cls(latestCPT,T.cpt.g,T.cpt.a,0)}bg);color:var(--${cls(latestCPT,T.cpt.g,T.cpt.a,0)});">CPT ${money(latestCPT)}</span>`:''}
-    <span class="ent-spend">${money(latest.cost)}</span></div>
-    <div class="mtx-scroll"><table class="mtx"><thead><tr>
-      <th class="metric-col">Overall Metric</th>
-      ${P.map(p=>`<th>${p.label}<div class="th-date">${gran==='dod'?fmtDate(p.to):fmtDate(p.from)+'–'+fmtDate(p.to)}</div></th>`).join('')}
-      <th class="delta-col">Δ ${gran.toUpperCase()}</th>
-    </tr></thead><tbody>`;
+// ═══ PRE-AGGREGATION ENGINE — computes all window sums once per render ═══
+// Eliminates O(entities × periods × rows) scanning; drops to O(rows) per render call.
+let AGG_CACHE={};  // keyed by "entKey:entId:from:to"
+let AGG_DIRTY=true; // set true when ALL_ROWS changes
+
+function buildAggCache(){
+  // Build flat lookup: for each row, add to its ad, adset, campaign buckets per date
+  AGG_CACHE={};
+  const byDate={}; // date → {ad:{id→sums}, as:{id→sums}, camp:{id→sums}}
+  ALL_ROWS.forEach(r=>{
+    if(!inAcctFilter(r.ad_id))return;
+    const cid=adCamp(r.ad_id), asid=adAset(r.ad_id), adid=r.ad_id, dt=r.date;
+    if(!byDate[dt])byDate[dt]={ad:{},as:{},camp:{}};
+    const D=byDate[dt];
+    function add(bucket,id){
+      if(!D[bucket][id])D[bucket][id]={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0};
+      const s=D[bucket][id];
+      s.impressions+=r.impressions||0;s.clicks+=r.clicks||0;s.installs+=r.installs||0;
+      s.cost+=r.cost||0;s.signups+=r.signups||0;s.trials+=r.trials||0;s.autopays+=r.autopays||0;
+      s.d0+=r.d0||0;s.d7+=r.d7||0;s.d14+=r.d14||0;s.d28+=r.d28||0;}
+    add('ad',adid);if(asid)add('as',asid);if(cid)add('camp',cid);});
+  AGG_CACHE={byDate};AGG_DIRTY=false;}
+
+function aggFast(from,to,entKey,entId){
+  if(AGG_DIRTY||!AGG_CACHE.byDate)buildAggCache();
+  const bucket=entKey==='campaign'?'camp':entKey==='adset'?'as':'ad';
+  const s={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0};
+  const D=AGG_CACHE.byDate;
+  Object.keys(D).forEach(dt=>{
+    if(dt<from||dt>to)return;
+    const row=D[dt][bucket]?.[entId];
+    if(!row)return;
+    for(const k in s)s[k]+=row[k]||0;});
+  return s;}
+
+function aggPortfolioFast(from,to,srcFilter){
+  // srcFilter: 'all'|'google'|'meta'
+  if(AGG_DIRTY||!AGG_CACHE.byDate)buildAggCache();
+  const s={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0};
+  ALL_ROWS.forEach(r=>{
+    if(r.date<from||r.date>to)return;
+    if(!inAcctFilter(r.ad_id))return;
+    if(srcFilter==='google'&&r.source!=='google')return;
+    if(srcFilter==='meta'&&r.source==='google')return;
+    for(const k in s)s[k]+=r[k]||0;});
+  return s;}
+
+// ═══ MATRIX VIEWS — new focused design ═══
+// Campaign tab: 3 portfolio rows (Combined/Google/Meta) + 1 filtered campaign table
+// Adset tab:    1 parent campaign table + 1 filtered adset table
+// Ad tab:       1 grandparent campaign + 1 parent adset + 1 filtered ad table
+// Filters ONLY affect the bottom entity table, not the portfolio/parent rows
+
+function mtxTableHTML(title,sums,P,extraRows,tagHtml){
+  // Render a single metric table for one entity across periods
+  let h=`<div style="font-size:12px;font-weight:700;color:var(--ink2);padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel2);display:flex;align-items:center;gap:8px;">${tagHtml||''}${title}</div>`;
+  h+=`<div class="mtx-scroll"><table class="mtx"><thead><tr>
+    <th class="metric-col">Metric</th>
+    ${P.map(p=>`<th>${p.label}<div class="th-date">${gran==='dod'?fmtDate(p.to):fmtDate(p.from)+'–'+fmtDate(p.to)}</div></th>`).join('')}
+    <th class="delta-col">Δ</th>
+  </tr></thead><tbody>`;
   Object.keys(METRIC_DEFS).forEach(g=>{
-    if(g==='video')return; // video is creative-level, not portfolio
+    if(g==='video')return;
     const defs=METRIC_DEFS[g].filter(m=>rowVisible[m.k]&&m.k!=='cost_share'&&!m.k.startsWith('cpt_meta'));
     if(!defs.length)return;
-    const gcol=collapsedGroups['pf-'+g];
-    html+=`<tr class="grp-row ${gcol?'collapsed':''}" data-grp="pf-${g}"><td class="metric-name" style="position:sticky;left:0;"><span class="gcaret">▼</span> ${GROUP_LABELS[g]}</td><td colspan="${numCols+1}"></td></tr>`;
-    if(gcol)return;
+    if(collapsedGroups['pf-'+g])return;
     defs.forEach(md=>{
       const vals=sums.map((s,idx)=>{
-        if(md.ap){const P=periods()[idx];return portfolioProjAutopay(P.from,P.to,md.ap);}
-        if(md.arc){const P=periods()[idx];const tk={D0:'d0',D7:'d7',D14:'d14',D28:'d28'}[md.arc];const apt={D0:'D7',D7:'D14',D14:'D21',D28:'D35'}[md.arc];const t=s[tk]||0;if(!t)return null;return portfolioProjAutopay(P.from,P.to,apt)/t*100;}
+        if(md.ap){return extraRows?extraRows[idx].projAP[md.ap]:null;}
+        if(md.arc){
+          const tk={D0:'d0',D7:'d7',D14:'d14',D28:'d28'}[md.arc];
+          const apt={D0:'D7',D7:'D14',D14:'D21',D28:'D35'}[md.arc];
+          const t=s[tk]||0;if(!t)return null;
+          return extraRows?extraRows[idx].projAP[apt]/t*100:null;}
         return md.calc(s,{totCost:s.cost});});
       const v0=vals[0],v1=vals[1];let dHTML='—';
-      if(v0!==null&&v1!==null&&v1!==0&&!isNaN(v0)&&!isNaN(v1)){const d=((v0-v1)/v1*100);const up=d>0;const hi=md.th?md.th[2]===1:true;const good=hi?up:!up;dHTML=`<span class="${good?(up?'d-up-g':'d-dn-g'):(up?'d-up-b':'d-dn-b')}">${up?'▲':'▼'}${Math.abs(d).toFixed(0)}%</span>`;}
-      html+=`<tr><td class="metric-name">${md.label}${md.early?' <span style="font-size:8px;color:var(--ink4)">D8+</span>':''}</td>`;
-      vals.forEach(v=>{let disp=md.early?(v?md.fmt(v):'—'):md.fmt(v);let cc=md.th&&v!==null&&!isNaN(v)?'val-'+cls(v,md.th[0],md.th[1],md.th[2]):'';html+=`<td class="${cc}">${disp}</td>`;});
-      html+=`<td class="delta-col">${dHTML}</td></tr>`;});});
-  html+=`</tbody></table></div></div>`;
-  return html;}
-function vMatrix(level){const P=periods();let ents=[];
-  if(level==='campaign')ents=Object.keys(MAP_CAMP).filter(id=>acct==='both'||MAP_CAMP[id].acct===acct).filter(id=>fCamp==='all'||id===fCamp).map(id=>({id,key:'campaign',name:MAP_CAMP[id].s,tag:MAP_CAMP[id].t||MAP_CAMP[id].acct,metaCPR:level==='campaign'?META_CAMP[id]?.cpr:null}));
-  else if(level==='adset')ents=Object.keys(MAP_ASET).filter(id=>(acct==='both'||MAP_ASET[id].acct===acct)&&(fCamp==='all'||MAP_ASET[id].c===fCamp)&&(fAset==='all'||id===fAset)).map(id=>({id,key:'adset',name:MAP_ASET[id].s,tag:MAP_CAMP[MAP_ASET[id].c]?.t}));
-  else ents=Object.keys(MAP_AD).filter(id=>(acct==='both'||MAP_AD[id].acct===acct)&&(fCamp==='all'||adCamp(id)===fCamp)&&(fAset==='all'||adAset(id)===fAset)&&(fAd==='all'||id===fAd)).map(id=>({id,key:'ad',name:MAP_AD[id].s,tag:MAP_CAMP[adCamp(id)]?.t}));
-  if(search){const q=search.toLowerCase();ents=ents.filter(e=>(e.name+' '+e.id).toLowerCase().includes(q));}
-  // filter to only entities with data
+      if(v0!=null&&v1!=null&&v1!==0&&!isNaN(v0)&&!isNaN(v1)){
+        const d=(v0-v1)/v1*100,up=d>0,hi=md.th?md.th[2]===1:true,good=hi?up:!up;
+        dHTML=`<span class="${good?(up?'d-up-g':'d-dn-g'):(up?'d-up-b':'d-dn-b')}">${up?'▲':'▼'}${Math.abs(d).toFixed(0)}%</span>`;}
+      h+=`<tr><td class="metric-name">${md.label}</td>`;
+      vals.forEach(v=>{const disp=md.fmt(v);const cc=md.th&&v!=null&&!isNaN(v)?'val-'+cls(v,md.th[0],md.th[1],md.th[2]):'';h+=`<td class="${cc}">${disp}</td>`;});
+      h+=`<td class="delta-col">${dHTML}</td></tr>`;});});
+  h+=`</tbody></table></div>`;
+  return h;}
+
+function portfolioSectionHTML(P){
+  // Three portfolio rows: Combined, Google-only, Meta-only (only show rows that have data)
+  const srcLabels=[
+    {k:'all',label:'All Channels (Combined)',tag:'<span class="tag" style="background:var(--brand);color:#fff;">ALL</span>'},
+    {k:'google',label:'Google UAC',tag:'<span class="tag tag-google">GOOGLE</span>'},
+    {k:'meta',label:'Meta (New + Old)',tag:'<span class="tag tag-manual">META</span>'},
+  ];
   const P_full=periods();
-  ents=ents.filter(e=>{const s=aggRangeFor(P_full[P_full.length-1].from,P_full[0].to,e.key,e.id);return s.cost>0||s.impressions>0;});
-  ents.sort((a,b)=>{const sa=aggRangeFor(P[0].from,P[0].to,a.key,a.id);const sb=aggRangeFor(P[0].from,P[0].to,b.key,b.id);return sb.cost-sa.cost;});
-  // PORTFOLIO ROLLUP — only on campaign tab, no search active
-  let portfolio='';
-  if(level==='campaign'&&!search){
-    const pfWindow=aggPortfolio(P_full[P_full.length-1].from,P_full[0].to);
-    if(pfWindow.cost>0||pfWindow.impressions>0)portfolio=portfolioMatrixHTML();
-  }
-  if(!ents.length)return portfolio+`<div class="empty-state"><div class="empty-ic">🔍</div><div>No individual entities with data in this window.</div><div style="font-size:11px;margin-top:6px;color:var(--ink4);">Try switching to DoD · adjusting the anchor date · or uploading more data.</div></div>`;
-  let html=`<div class="banner ${gran!=='dod'?'warn':''}">📅 <b>&nbsp;${gran.toUpperCase()}&nbsp;</b> · ${numCols} periods · anchor ${anchor}.${gran!=='dod'?' WoW/MoM fill as history accumulates.':''} ${isNewView()?'Click entity header → Placement · Video · Demographics.':'Old account: funnel metrics only.'}</div>`;
-  html=portfolio+html;
-  if(level==='campaign'&&!search&&portfolio){html+=`<div class="sec-head"><span class="sec-title">Individual Campaigns</span><span class="sec-line"></span></div>`;}
-  ents.forEach(e=>{
-    const sums=P.map(p=>aggRangeFor(p.from,p.to,e.key,e.id));
-    const tots=P.map(p=>totalCostRange(p.from,p.to));
-    const latest=sums[0];const latestCPT=latest.trials?latest.cost/latest.trials:null;
-    const open=openEnts[e.key+'-'+e.id];
-    const cid=e.key==='campaign'?e.id:e.key==='adset'?MAP_ASET[e.id]?.c:adCamp(e.id);
-    const canDrill=isNewView()&&(META_CAMP[cid]||META_ASET[e.id]);
-    html+=`<div class="matrix-card"><div class="mtx-entityhead" ${canDrill?`data-ent="${e.key}-${e.id}"`:''} style="${canDrill?'':'cursor:default;'}">
-      ${canDrill?`<span class="gcaret" style="${open?'':'transform:rotate(-90deg)'}">▼</span>`:'<span style="width:12px;"></span>'}
-      ${e.tag?`<span class="tag tag-${e.tag}">${e.tag.toUpperCase()}</span>`:''}
-      <span style="font-weight:700;font-size:13px;">${e.name}</span>
-      <span style="font-size:9.5px;color:var(--ink4);font-family:var(--m);margin-left:2px;">${e.id}</span>
+  const from0=P_full[P_full.length-1].from, to0=P_full[0].to;
+  let h='';
+  srcLabels.forEach(({k,label,tag})=>{
+    const check=aggPortfolioFast(from0,to0,k);
+    if(check.cost===0&&check.impressions===0)return; // skip empty source
+    const sums=P.map(p=>aggPortfolioFast(p.from,p.to,k));
+    const latest=sums[0];const latestCPT=latest.d0*EST.d28?latest.cost/(latest.d0*EST.d28):null;
+    h+=`<div class="matrix-card${k==='all'?' portfolio':''}">
+      <div class="mtx-entityhead${k==='all'?' portfolio-head':''}" style="cursor:default;">
+        <span style="width:12px;"></span>${tag}
+        <span style="font-weight:800;font-size:14px;">${label}</span>
+        ${latestCPT?`<span class="ent-cpt" style="background:var(--${cls(latestCPT,T.cpt.g,T.cpt.a,0)}bg);color:var(--${cls(latestCPT,T.cpt.g,T.cpt.a,0)});">CPT ${money(latestCPT)}</span>`:''}
+        <span class="ent-spend">${money(latest.cost)}</span></div>
+      ${mtxTableHTML('',sums,P,null,'')}
+    </div>`;});
+  return h;}
+
+function entityTableHTML(entKey,entId,P){
+  // Single entity table with header showing name + CPT badge
+  if(!entId)return '';
+  const sums=P.map(p=>aggFast(p.from,p.to,entKey,entId));
+  const latest=sums[0];
+  const latestCPT=latest.d0*EST.d28?latest.cost/(latest.d0*EST.d28):null;
+  const nm=entKey==='campaign'?MAP_CAMP[entId]?.s:entKey==='adset'?MAP_ASET[entId]?.s:MAP_AD[entId]?.s;
+  const tag=entKey==='campaign'?MAP_CAMP[entId]?.t:entKey==='adset'?MAP_CAMP[MAP_ASET[entId]?.c]?.t:MAP_CAMP[adCamp(entId)]?.t;
+  const src=srcOf(entId);
+  const srcBadge=src==='google'?'<span class="tag tag-google">GOOGLE</span>':'';
+  const tagBadge=tag?`<span class="tag tag-${tag}">${tag.toUpperCase()}</span>`:'';
+  if(latest.cost===0&&latest.impressions===0&&sums.every(s=>s.cost===0))return'';
+  return `<div class="matrix-card">
+    <div class="mtx-entityhead" style="cursor:default;">
+      <span style="width:12px;"></span>${srcBadge}${tagBadge}
+      <span style="font-weight:700;font-size:13px;">${nm||entId}</span>
+      <span style="font-size:9.5px;color:var(--ink4);font-family:var(--m);margin-left:4px;">${entId}</span>
       ${latestCPT?`<span class="ent-cpt" style="background:var(--${cls(latestCPT,T.cpt.g,T.cpt.a,0)}bg);color:var(--${cls(latestCPT,T.cpt.g,T.cpt.a,0)});">CPT ${money(latestCPT)}</span>`:''}
       <span class="ent-spend">${money(latest.cost)}</span></div>
-      ${open&&canDrill?`<div class="drilldown">${drilldownHTML(e)}</div>`:''}
-      <div class="mtx-scroll"><table class="mtx"><thead><tr>
-        <th class="metric-col">Metric</th>
-        ${P.map(p=>`<th>${p.label}<div class="th-date">${gran==='dod'?fmtDate(p.to):fmtDate(p.from)+'–'+fmtDate(p.to)}</div></th>`).join('')}
-        <th class="delta-col">Δ ${gran.toUpperCase()}</th>
-      </tr></thead><tbody>`;
-    Object.keys(METRIC_DEFS).forEach(g=>{
-      if(g==='video'&&!isNewView())return;
-      const defs=METRIC_DEFS[g].filter(m=>rowVisible[m.k]);if(!defs.length)return;
-      const gcol=collapsedGroups[g];
-      html+=`<tr class="grp-row ${gcol?'collapsed':''}" data-grp="${g}"><td class="metric-name" style="position:sticky;left:0;"><span class="gcaret">▼</span> ${GROUP_LABELS[g]}</td><td colspan="${numCols+1}"></td></tr>`;
-      if(gcol)return;
-      defs.forEach(md=>{
-        const vals=sums.map((s,idx)=>{
-          if(md.vid)return videoVal(e,md.vid);
-          if(md.ap){const P=periods()[idx];return projAutopaysFor(P.from,P.to,e.key,e.id,md.ap);}
-          if(md.arc){const P=periods()[idx];const tk={D0:'d0',D7:'d7',D14:'d14',D28:'d28'}[md.arc];const apt={D0:'D7',D7:'D14',D14:'D21',D28:'D35'}[md.arc];const t=s[tk]||0;if(!t)return null;const ap=projAutopaysFor(P.from,P.to,e.key,e.id,apt);return ap/t*100;}
-          const metaCPR=e.key==='campaign'?META_CAMP[e.id]?.cpr:null;return md.calc(s,{totCost:tots[idx],metaCPR});});
-        const v0=vals[0],v1=vals[1];let dHTML='—';
-        if(v0!==null&&v1!==null&&v1!==0&&!isNaN(v0)&&!isNaN(v1)){const d=((v0-v1)/v1*100);const up=d>0;const hi=md.th?md.th[2]===1:true;const good=hi?up:!up;dHTML=`<span class="${good?(up?'d-up-g':'d-dn-g'):(up?'d-up-b':'d-dn-b')}">${up?'▲':'▼'}${Math.abs(d).toFixed(0)}%</span>`;}
-        html+=`<tr><td class="metric-name">${md.label}${md.early?' <span style="font-size:8px;color:var(--ink4)">D8+</span>':''}</td>`;
-        vals.forEach(v=>{let disp=md.early?(v?md.fmt(v):'—'):md.fmt(v);let cc=md.th&&v!==null&&!isNaN(v)?'val-'+cls(v,md.th[0],md.th[1],md.th[2]):'';html+=`<td class="${cc}">${disp}</td>`;});
-        html+=`<td class="delta-col">${dHTML}</td></tr>`;});});
-    html+=`</tbody></table></div></div>`;});
-  return html;}
-function drilldownHTML(e){
-  const cid=e.key==='campaign'?e.id:e.key==='adset'?MAP_ASET[e.id]?.c:adCamp(e.id);
-  let html='<div class="dd-grid">';
-  // VIDEO
-  html+='<div class="dd-block"><div class="dd-title">🎬 Video · Jun 1–18</div><table class="dd-tbl"><tbody>';
-  if(e.key==='ad'){const v=META_AD[e.id];if(v){html+=`<tr><td>25%</td><td>${(v.p25/v.imp*100).toFixed(1)}%</td></tr><tr><td>50%</td><td>${(v.p50/v.imp*100).toFixed(1)}%</td></tr><tr><td>75%</td><td>${(v.p75/v.imp*100).toFixed(1)}%</td></tr><tr><td>100%</td><td>${(v.p100/v.imp*100).toFixed(1)}%</td></tr><tr><td>ThruPlays</td><td>${num(v.thru)}</td></tr>`;}else html+='<tr><td style="color:var(--ink4)">No video data</td><td></td></tr>';}
-  else{const v=e.key==='campaign'?META_CAMP[e.id]:META_ASET[e.id];if(v&&v.sec3){const hk=v.sec3/v.imp*100,hd=v.thru/v.sec3*100;html+=`<tr><td>Hook Rate (3s÷Impr)</td><td><span style="color:var(--${cls(hk,T.hook.g,T.hook.a,1)});font-weight:700;">${hk.toFixed(1)}%</span></td></tr><tr><td>Hold Rate (Thru÷3s)</td><td><span style="color:var(--${cls(hd,T.hold.g,T.hold.a,1)});font-weight:700;">${hd.toFixed(1)}%</span></td></tr><tr><td>3-Sec Plays</td><td>${num(v.sec3)}</td></tr><tr><td>ThruPlays</td><td>${num(v.thru)}</td></tr>`;}else html+='<tr><td style="color:var(--ink4)">No video data</td><td></td></tr>';}
-  html+='</tbody></table></div>';
-  // PLACEMENT
-  html+='<div class="dd-block"><div class="dd-title">📍 Placements · Jun 1–18</div>';
-  const pl=PLACEMENT[cid];
-  if(pl){const tot=pl.reduce((a,r)=>a+r.imp,0);html+='<table class="dd-tbl"><thead><tr><th>Platform</th><th>Share</th><th>CTR</th><th>Spend</th></tr></thead><tbody>';
-    pl.sort((a,b)=>b.imp-a.imp).forEach(r=>{const sh=r.imp/tot*100;const isBad=r.pos==='Audience Network'&&r.ctr>5;html+=`<tr><td>${r.pos}${isBad?' ⚠️':''}</td><td>${sh.toFixed(1)}%<span class="bar-mini"><span class="bar-fill" style="width:${sh}%"></span></span></td><td><span style="font-weight:700;color:var(--${isBad?'bad':'ink2'});">${r.ctr.toFixed(2)}%</span></td><td>${money(r.spend)}</td></tr>`;});
-    html+='</tbody></table>';}else html+='<div class="dd-na">Campaign-level only</div>';
-  html+='</div>';
-  // AGE
-  html+='<div class="dd-block"><div class="dd-title">🎂 Age · Jun 1–18</div>';
-  const da=DEMO_AGE[cid];if(da){const tot=da.reduce((a,r)=>a+r.imp,0);html+='<table class="dd-tbl"><thead><tr><th>Age</th><th>Share</th><th>CTR</th></tr></thead><tbody>';da.filter(r=>r.imp>100).sort((a,b)=>b.imp-a.imp).forEach(r=>{const sh=r.imp/tot*100;html+=`<tr><td>${r.g}</td><td>${sh.toFixed(0)}%<span class="bar-mini"><span class="bar-fill" style="width:${sh}%"></span></span></td><td>${r.ctr.toFixed(2)}%</td></tr>`;});html+='</tbody></table>';}else html+='<div class="dd-na">Campaign-level only</div>';
-  html+='</div>';
-  // GENDER
-  html+='<div class="dd-block"><div class="dd-title">⚧ Gender · Jun 1–18</div>';
-  const dg=DEMO_GENDER[cid];if(dg){const tot=dg.reduce((a,r)=>a+r.imp,0);html+='<table class="dd-tbl"><thead><tr><th>Gender</th><th>Share</th><th>CTR</th></tr></thead><tbody>';dg.filter(r=>r.imp>100).sort((a,b)=>b.imp-a.imp).forEach(r=>{const sh=r.imp/tot*100;html+=`<tr><td>${r.g}</td><td>${sh.toFixed(0)}%<span class="bar-mini"><span class="bar-fill" style="width:${sh}%"></span></span></td><td>${r.ctr.toFixed(2)}%</td></tr>`;});html+='</tbody></table>';}else html+='<div class="dd-na">Campaign-level only</div>';
-  html+='</div></div>';return html;}
+    ${mtxTableHTML('',sums,P,null,'')}
+  </div>`;}
+
+function filteredEntityListHTML(entKey,P){
+  // Filtered list of entities (for campaign tab only when no specific selection)
+  let ids=[];
+  if(entKey==='campaign')
+    ids=Object.keys(MAP_CAMP).filter(id=>(acct==='both'||MAP_CAMP[id].acct===acct)&&(fCamp==='all'||id===fCamp));
+  else if(entKey==='adset')
+    ids=Object.keys(MAP_ASET).filter(id=>(acct==='both'||MAP_ASET[id].acct===acct)&&(fCamp==='all'||MAP_ASET[id].c===fCamp)&&(fAset==='all'||id===fAset));
+  else
+    ids=Object.keys(MAP_AD).filter(id=>(acct==='both'||MAP_AD[id].acct===acct)&&(fCamp==='all'||adCamp(id)===fCamp)&&(fAset==='all'||adAset(id)===fAset)&&(fAd==='all'||id===fAd));
+  if(search){const q=search.toLowerCase();ids=ids.filter(id=>{const nm=entKey==='campaign'?MAP_CAMP[id]?.s:entKey==='adset'?MAP_ASET[id]?.s:MAP_AD[id]?.s;return (nm+' '+id).toLowerCase().includes(q);});}
+  const P_full=periods();
+  ids=ids.filter(id=>{const s=aggFast(P_full[P_full.length-1].from,P_full[0].to,entKey,id);return s.cost>0||s.impressions>0;});
+  ids.sort((a,b)=>aggFast(P[0].from,P[0].to,entKey,b).cost-aggFast(P[0].from,P[0].to,entKey,a).cost);
+  if(!ids.length)return `<div class="empty-state"><div class="empty-ic">🔍</div><div>No ${entKey}s with data in this window.</div></div>`;
+  return ids.map(id=>entityTableHTML(entKey,id,P)).join('');}
+
+function vMatrix(level){
+  AGG_DIRTY=true; // always rebuild cache when view renders (filters may have changed)
+  buildAggCache();
+  const P=periods();
+  let h='';
+  if(level==='campaign'){
+    // Portfolio section: Combined + Google + Meta (filters do NOT affect these)
+    h+=`<div class="sec-head"><span class="sec-title" style="color:var(--brand);">📊 Portfolio Overview</span><span class="sec-line"></span><span style="font-size:10px;color:var(--ink4);">Filters below do not affect these rows</span></div>`;
+    h+=portfolioSectionHTML(P);
+    // Filtered campaign(s) below
+    const activeCampFilter=fCamp!=='all'?fCamp:null;
+    h+=`<div class="sec-head"><span class="sec-title">${activeCampFilter?'Campaign: '+(MAP_CAMP[activeCampFilter]?.s||activeCampFilter).slice(0,40):'All Campaigns (use filter to drill into one)'}</span><span class="sec-line"></span></div>`;
+    h+=filteredEntityListHTML('campaign',P);
+  } else if(level==='adset'){
+    // Parent campaign table (fixed — filter drives which campaign is shown)
+    if(fCamp&&fCamp!=='all'){
+      h+=`<div class="sec-head"><span class="sec-title">Campaign</span><span class="sec-line"></span></div>`;
+      h+=entityTableHTML('campaign',fCamp,P)||`<div class="banner warn">No data for selected campaign in this window.</div>`;
+    }
+    // Filtered adsets
+    h+=`<div class="sec-head"><span class="sec-title">${fAset!=='all'?'Ad Set: '+(MAP_ASET[fAset]?.s||fAset).slice(0,40):'Ad Sets'+(fCamp!=='all'?' in this campaign':'')}</span><span class="sec-line"></span></div>`;
+    h+=filteredEntityListHTML('adset',P);
+  } else if(level==='ad'){
+    // Grandparent campaign
+    if(fCamp&&fCamp!=='all'){
+      h+=`<div class="sec-head"><span class="sec-title">Campaign</span><span class="sec-line"></span></div>`;
+      h+=entityTableHTML('campaign',fCamp,P)||'';
+    }
+    // Parent adset
+    if(fAset&&fAset!=='all'){
+      h+=`<div class="sec-head"><span class="sec-title">Ad Set</span><span class="sec-line"></span></div>`;
+      h+=entityTableHTML('adset',fAset,P)||'';
+    }
+    // Filtered ad(s)
+    h+=`<div class="sec-head"><span class="sec-title">${fAd!=='all'?'Ad: '+(MAP_AD[fAd]?.s||fAd).slice(0,40):'Ads'+(fAset!=='all'?' in this ad set':'')+(fCamp!=='all'?' (campaign filtered)':'')}</span><span class="sec-line"></span></div>`;
+    h+=filteredEntityListHTML('ad',P);
+  }
+  if(!h)h=`<div class="empty-state"><div class="empty-ic">🔍</div><div>No data in this window. Adjust anchor date or upload CSVs.</div></div>`;
+  const banner=`<div class="banner ${gran!=='dod'?'warn':''}">📅 <b>${gran.toUpperCase()}</b> · ${numCols} periods · anchor ${anchor}.${gran!=='dod'?' WoW/MoM fills as history accumulates.':''}</div>`;
+  return banner+h;}
+
 function bindMatrix(){
   $$('.mtx-entityhead[data-ent]').forEach(h=>h.onclick=()=>{const k=h.dataset.ent;openEnts[k]=!openEnts[k];render();});
   $$('.grp-row').forEach(r=>r.onclick=()=>{const g=r.dataset.grp;collapsedGroups[g]=!collapsedGroups[g];render();});}
+
+
 // Standalone Meta views
 function vCreative(){let h=`<div class="banner">🎬 Meta data · Jun 1–18 2026. Hook Rate = 3-sec plays ÷ impressions · Hold Rate = ThruPlays ÷ 3-sec plays. True Hook/Hold at campaign & ad set level. Ad level shows play-through depth (3-sec plays not exposed per-ad by Meta API).</div>`;
   // Campaign
@@ -1229,316 +1299,111 @@ function rebuildFilters(){const fc=$('#fCampaign'),fa=$('#fAdset'),fd=$('#fAd');
 function splitCSV(l){const out=[];let c='',q=false;for(let i=0;i<l.length;i++){const ch=l[i];if(ch==='"')q=!q;else if(ch===','&&!q){out.push(c);c='';}else c+=ch;}out.push(c);return out;}
 // date normalizer
 function normDate(s){if(!s)return'';s=String(s).trim().split(' ')[0].split('T')[0];if(/^\d{4}-\d{2}-\d{2}$/.test(s))return s;const m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);if(m){let a=m[1],b=m[2],y=m[3],dd=a,mm=b;if(+a>12){dd=a;mm=b;}else if(+b>12){dd=b;mm=a;}return `${y}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;}return s;}
-// MAPPING CSV PARSER
-$('#mapCsv').addEventListener('change',function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();
-  rd.onload=ev=>{const lines=ev.target.result.trim().split(/\r?\n/);const H=splitCSV(lines[0]).map(x=>x.trim().replace(/^"|"$/g,''));
+// ═══ UNIFIED MAPPING CSV PARSER (Meta + Google — auto-detected by Source column) ═══
+// Both files share identical headers: Ad ID, Adset ID, Campaign ID, Ad, Adset, Campaign, Source
+// Google rows: Ad ID = "NA", Source = "googleadwords_int"  → synthetic leaf MAP_AD[asId]
+// Meta rows:   Ad ID = actual ID, Source = "Facebook Ads"  → normal MAP_AD[adId]
+$('#mapCsv').addEventListener('change',function(e){
+  const files=[...e.target.files];if(!files.length)return;
+  let totalAds=0,done=0;
+  files.forEach(f=>{const rd=new FileReader();rd.onload=ev=>{
+    const lines=ev.target.result.trim().split(/\r?\n/);
+    const H=splitCSV(lines[0]).map(x=>x.trim().replace(/^"|"$/g,''));
     const gi=names=>{for(const n of names){const i=H.findIndex(h=>h.toLowerCase()===n.toLowerCase());if(i>=0)return i;}return-1;};
-    const iAd=gi(['Ad ID']),iAs=gi(['Ad set ID','Adset ID']),iC=gi(['Campaign ID']),iAdN=gi(['Ad name','Ad Name']),iAsN=gi(['Ad set name','Adset Name','Ad Set name']),iCN=gi(['Campaign name','Campaign Name']);
+    const iAd=gi(['Ad ID']),iAs=gi(['Adset ID','Ad set ID']),iC=gi(['Campaign ID']),
+          iAdN=gi(['Ad','Ad name']),iAsN=gi(['Adset','Ad set name','Adset Name']),
+          iCN=gi(['Campaign','Campaign name']),iSrc=gi(['Source']);
     const newAdIds=new Set(Object.keys(MAP_AD).filter(id=>classifyAcct(id)==='new'));
     let n=0;
-    for(let i=1;i<lines.length;i++){const v=splitCSV(lines[i]);if(v.length<3)continue;
-      const adId=v[iAd]?.trim().replace(/^"|"$/g,'');const asId=v[iAs]?.trim().replace(/^"|"$/g,'');const cId=v[iC]?.trim().replace(/^"|"$/g,'');if(!adId||!cId)continue;
-      const adN=(v[iAdN]||'').trim().replace(/^"|"$/g,'')||adId;const asN=(v[iAsN]||'').trim().replace(/^"|"$/g,'')||asId;const cN=(v[iCN]||'').trim().replace(/^"|"$/g,'')||cId;
-      const ac=classifyAcct(cId);
-      const ctype=/\bAAA\b/i.test(cN)?'aaa':/manual/i.test(cN)?'manual':ac;
-      if(!MAP_CAMP[cId])MAP_CAMP[cId]={n:cN,s:tr(cN,42),acct:ac,t:ctype};
-      if(!MAP_ASET[asId])MAP_ASET[asId]={s:tr(asN,38),c:cId,acct:ac};
-      if(!newAdIds.has(adId))MAP_AD[adId]={s:tr(adN,38),as:asId,c:cId,acct:ac};
+    for(let i=1;i<lines.length;i++){
+      const v=splitCSV(lines[i]);if(v.length<3)continue;
+      const adId=(v[iAd]||'').trim().replace(/^"|"$/g,'');
+      const asId=(v[iAs]||'').trim().replace(/^"|"$/g,'');
+      const cId=(v[iC]||'').trim().replace(/^"|"$/g,'');
+      if(!asId||!cId)continue;
+      const adN=(v[iAdN]||'').trim().replace(/^"|"$/g,'')||adId;
+      const asN=(v[iAsN]||'').trim().replace(/^"|"$/g,'')||asId;
+      const cN=(v[iCN]||'').trim().replace(/^"|"$/g,'')||cId;
+      const src=((v[iSrc]||'').trim().replace(/^"|"$/g,'')||'').toLowerCase();
+      const isGoogle=src.includes('google')||adId.toUpperCase()==='NA'||adId==='';
+      if(isGoogle){
+        // Google: adset is the terminal node — synthetic leaf pointing to itself
+        if(!MAP_CAMP[cId])MAP_CAMP[cId]={n:cN,s:tr(cN,42),acct:'google',t:'google'};
+        if(!MAP_ASET[asId])MAP_ASET[asId]={s:tr(asN,38),c:cId,acct:'google',source:'google'};
+        MAP_AD[asId]={s:tr(asN,38),as:asId,c:cId,acct:'google',source:'google'};
+      } else {
+        // Meta: normal hierarchy
+        const ac=classifyAcct(cId);
+        const ctype=/\bAAA\b/i.test(cN)?'aaa':/manual/i.test(cN)?'manual':ac;
+        if(!MAP_CAMP[cId])MAP_CAMP[cId]={n:cN,s:tr(cN,42),acct:ac,t:ctype};
+        if(!MAP_ASET[asId])MAP_ASET[asId]={s:tr(asN,38),c:cId,acct:ac};
+        if(adId&&adId.toUpperCase()!=='NA'&&!newAdIds.has(adId))
+          MAP_AD[adId]={s:tr(adN,38),as:asId,c:cId,acct:ac};
+      }
       n++;}
-    $('#mapStat').textContent=`${n} ads · ${Object.keys(MAP_CAMP).length} campaigns`;$('#mapDot').className='us-dot ok';
-    e.target.value='';render();};rd.readAsText(f);});
-// PERFORMANCE CSV PARSER (multi-file)
-$('#perfCsv').addEventListener('change',function(e){const files=[...e.target.files];if(!files.length)return;
-  let acc=[],done=0;
+    totalAds+=n;done++;
+    if(done===files.length){
+      $('#mapStat').textContent=`${totalAds} rows · ${Object.keys(MAP_CAMP).length} camps (${Object.values(MAP_CAMP).filter(c=>c.acct==='google').length}G+${Object.values(MAP_CAMP).filter(c=>c.acct!=='google').length}M)`;
+      $('#mapDot').className='us-dot ok';render();}};rd.readAsText(f);});});
+
+// ═══ UNIFIED PERFORMANCE CSV PARSER (Meta Ad-level + Google Adset-level — auto-detected) ═══
+// Detection: first column header "Adset ID" → Google; "Ad ID" → Meta
+// All metric columns (Date through sub_amt_deducted) are identical in both files
+// Meta perf upload NO LONGER wipes Google rows — both accumulate into ALL_ROWS together
+$('#perfCsv').addEventListener('change',function(e){
+  const files=[...e.target.files];if(!files.length)return;
+  // Accumulate into a fresh array, replacing ALL_ROWS atomically at the end
+  const newRows=[];let done=0;
   files.forEach(f=>{const rd=new FileReader();rd.onload=ev=>{
-    const lines=ev.target.result.trim().split(/\r?\n/);const H=splitCSV(lines[0]).map(x=>x.trim());const gi=n=>H.indexOf(n);
-    for(let i=1;i<lines.length;i++){const v=splitCSV(lines[i]);if(v.length<5)continue;
-      const N=idx=>{const x=parseFloat(v[idx]?.trim());return isNaN(x)?0:x;};
-      const row={ad_id:(v[gi('Ad ID')]||'').trim(),date:normDate(v[gi('Date')]),impressions:N(gi('Impressions')),clicks:N(gi('Clicks')),installs:N(gi('Installs appsflyer')),cost:N(gi('Cost')),signups:N(gi('Unique users ltv days cumulative appsflyer signed_up')),trials:N(gi('Unique users ltv days cumulative appsflyer trial_started')),autopays:N(gi('Unique users ltv days cumulative appsflyer sub_amt_deducted')),d0:N(gi('Unique users 0 days cumulative appsflyer trial_started')),d7:N(gi('Unique users 6 days cumulative appsflyer trial_started')),d14:N(gi('Unique users 13 days cumulative appsflyer trial_started')),d28:N(gi('Unique users 27 days cumulative appsflyer trial_started'))};
-      // strict validation — kills malformed fragments and bad anchor poisoning
-      if(/^\d{6,}$/.test(row.ad_id)&&/^\d{4}-\d{2}-\d{2}$/.test(row.date))acc.push(row);}
-    done++;if(done===files.length){
-      ALL_ROWS=acc;const ds=acc.map(r=>r.date).filter(Boolean).sort();if(ds.length){anchor=ds[ds.length-1];dataMaxDate=ds[ds.length-1];$('#anchor').value=anchor;}
-      const newC=acc.filter(r=>classifyAcct(r.ad_id)==='new').length;
-      $('#perfStat').textContent=`${acc.length.toLocaleString()} rows · ${newC.toLocaleString()} new · ${(acc.length-newC).toLocaleString()} old · ${ds[0]} → ${ds[ds.length-1]}`;
-      $('#perfDot').className='us-dot ok';$('#updated').textContent='Updated: '+new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
-      e.target.value='';render();}};rd.readAsText(f);});});
-// ═══════════════════════════════════════════════════════════
-// CREATIVE SCORECARD — Meta only · Ad level
-// Flags: WINNER (CAC≤450) · POTENTIAL WINNER (CPT≤120, CAC immature)
-//        MONITOR (CPT 120-200 OR CAC 450-500) · PAUSED (zero recent spend)
-// Independent FATIGUING badge: CTR falling AND CPT rising ≥20% AND CAC rising ≥20%
-// Only shows ads active OR with spend in last 2 days
-// ═══════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════
-// CREATIVE SCORECARD v2
-// ═══════════════════════════════════════════════════════════
-function creativeFlagAndFatigue(adId){
-  // Always evaluate against dataMaxDate
-  const _anch=dataMaxDate;
-  // ── (2) Last-60-day window only ──
-  const win60from=isoBack_abs(_anch,59), win60to=_anch;
-  const life60=aggRangeFor(win60from,win60to,'ad',adId);
-  if(life60.cost<1000)return null; // (2) ₹1000 gate in last 60 days
-  // ── Recent spend: last 2 days ──
-  const r2from=isoBack_abs(_anch,1);
-  const r2=aggRangeFor(r2from,_anch,'ad',adId);
-  const recentSpend=r2.cost;
-  // ── Maturity / CAC ──
-  const matCut=isoBack_abs(_anch,ACT.matureDays);
-  const cohort60=aggRangeFor(win60from,matCut,'ad',adId);
-  const firstSpend=(function(){const rs=ALL_ROWS.filter(r=>r.ad_id===adId&&r.cost>0).map(r=>r.date).sort();return rs[0]||null;})();
-  const maturedDays=firstSpend?Math.max(0,daysBetween_abs(matCut,firstSpend)):0;
-  const matured=maturedDays>=7&&cohort60.cost>0;
-  const ap_60=projAutopaysFor(win60from,matCut,'ad',adId);
-  // ── (4) CAC only when ≥20 matured trials ──
-  const minTrialsCac=20;
-  const cacTrials=cohort60.trials||0;
-  const cac=(matured&&ap_60>0&&cacTrials>=minTrialsCac)?cohort60.cost/ap_60:null;
-  const cacLowBase=(matured&&ap_60>0&&cacTrials>0&&cacTrials<minTrialsCac);
-  // ── CPT (D28 est, last-60d window) ──
-  const lifeT28=life60.d0*EST.d28;
-  const cpt=lifeT28?life60.cost/lifeT28:null;
-  // ── (7) FIXED FLAG LOGIC ──
-  let flag,label;
-  if(recentSpend===0){flag='paused';label='PAUSED';}
-  else if(matured&&cac!=null&&cac<=T.cac.g){flag='winner';label='WINNER';}
-  else if(!matured&&cpt!=null&&cpt<=ACT.cptScale){flag='pwinner';label='POTENTIAL WINNER';}
-  else if(cpt!=null&&cpt>ACT.cptScale&&cpt<=T.cpt.a){flag='monitor';label='MONITOR';}
-  else if(cac!=null&&cac>T.cac.g&&cac<=T.cac.a){flag='monitor';label='MONITOR';}
-  else if(cpt!=null&&cpt>T.cpt.a){flag='monitor';label='MONITOR (CPT>₹200)';}
-  else if(cac!=null&&cac>T.cac.a){flag='monitor';label='MONITOR (CAC>₹500)';}
-  else{flag='monitor';label='MONITOR (building)';}
-  // ── Fatigue: CTR falling AND CPT rising ≥20% AND CAC rising ≥20% ──
-  const wkCur=aggRangeFor(isoBack_abs(_anch,6),_anch,'ad',adId);
-  const wkPrev=aggRangeFor(isoBack_abs(_anch,13),isoBack_abs(_anch,7),'ad',adId);
-  const ctrCur=wkCur.impressions?wkCur.clicks/wkCur.impressions*100:null;
-  const ctrPrev=wkPrev.impressions?wkPrev.clicks/wkPrev.impressions*100:null;
-  const cptCurW=(wkCur.d0*EST.d28)?wkCur.cost/(wkCur.d0*EST.d28):null;
-  const cptPrevW=(wkPrev.d0*EST.d28)?wkPrev.cost/(wkPrev.d0*EST.d28):null;
-  const apCurW=projAutopaysFor(isoBack_abs(_anch,6),_anch,'ad',adId);
-  const apPrevW=projAutopaysFor(isoBack_abs(_anch,13),isoBack_abs(_anch,7),'ad',adId);
-  const cacCurW=(apCurW&&wkCur.cost)?wkCur.cost/apCurW:null;
-  const cacPrevW=(apPrevW&&wkPrev.cost)?wkPrev.cost/apPrevW:null;
-  const ctrDrop=ctrCur!=null&&ctrPrev!=null&&ctrPrev>0&&ctrCur<ctrPrev;
-  const cptRise=cptCurW!=null&&cptPrevW!=null&&cptPrevW>0&&(cptCurW-cptPrevW)/cptPrevW>=0.20;
-  const cacRise=cacCurW!=null&&cacPrevW!=null&&cacPrevW>0&&(cacCurW-cacPrevW)/cacPrevW>=0.20;
-  const fatiguing=ctrDrop&&cptRise&&cacRise;
-  const fatigueDetail=fatiguing?`CTR↓${ctrPrev>0?Math.abs(((ctrCur-ctrPrev)/ctrPrev*100).toFixed(0)):'?'}% CPT↑${cptPrevW>0?((cptCurW-cptPrevW)/cptPrevW*100).toFixed(0):'?'}% CAC↑${cacPrevW>0?((cacCurW-cacPrevW)/cacPrevW*100).toFixed(0):'?'}%`:'';
-  // ── (3) Last-3-days individual data ──
-  const d1=aggRangeFor(isoBack_abs(_anch,0),isoBack_abs(_anch,0),'ad',adId);
-  const d2=aggRangeFor(isoBack_abs(_anch,1),isoBack_abs(_anch,1),'ad',adId);
-  const d3=aggRangeFor(isoBack_abs(_anch,2),isoBack_abs(_anch,2),'ad',adId);
-  function dayCpt(d){return(d.d0*EST.d28)?d.cost/(d.d0*EST.d28):null;}
-  function dayCtr(d){return d.impressions?d.clicks/d.impressions*100:null;}
-  // ── (6) Hook/Hold from uploaded CSV ──
-  const hd=SC_HOOK[adId];
-  const hookRate=hd&&hd.imp?hd.sec3/hd.imp*100:null;
-  const holdRate=hd&&hd.sec3?hd.thru/hd.sec3*100:null;
-  // ── (8) AR% W1/W2/W3 (matured cohorts only, D28 trials / D35 autopays projected) ──
-  function arWindow(daysFrom,daysTo){
-    const f=isoBack_abs(_anch,daysFrom), t=isoBack_abs(_anch,daysTo);
-    const agg=aggRangeFor(f,t,'ad',adId);
-    const ap=projAutopaysFor(f,t,'ad',adId,'D35');
-    const t28=agg.d0*EST.d28;
-    if(!t28||!ap)return null;
-    return ap/t28*100;
-  }
-  const arW1=arWindow(ACT.matureDays+7, ACT.matureDays);    // 1 matured week
-  const arW2=arWindow(ACT.matureDays+14, ACT.matureDays+7); // 2nd matured week
-  const arW3=arWindow(ACT.matureDays+21, ACT.matureDays+14);// 3rd matured week
-  return{adId,flag,label,fatiguing,fatigueDetail,recentSpend,matured,cac,cacLowBase,cacTrials,cpt,
-    spend:life60.cost,trials:life60.trials,
-    ctrCur,ctrPrev,cptCurW,cptPrevW,cacCurW,cacPrevW,
-    hookRate,holdRate,
-    arW1,arW2,arW3,
-    d1Spend:d1.cost,d2Spend:d2.cost,d3Spend:d3.cost,
-    d1Cpt:dayCpt(d1),d2Cpt:dayCpt(d2),d3Cpt:dayCpt(d3),
-    d1Ctr:dayCtr(d1),d2Ctr:dayCtr(d2),d3Ctr:dayCtr(d3),
-    campId:adCamp(adId),asId:adAset(adId),adNm:MAP_AD[adId]?.s||adId};}
-// date helpers that take an explicit anchor (don't rely on global)
-function isoBack_abs(anchorDate,days){const d=new Date(anchorDate);d.setDate(d.getDate()-days);return d.toISOString().split('T')[0];}
-function daysBetween_abs(a,b){return Math.round((new Date(a)-new Date(b))/86400000);}
-const SC_RANK={winner:0,pwinner:1,monitor:2,paused:3};
-function vScorecard(){
-  const _saved=anchor;anchor=dataMaxDate;
-  try{return vScorecardInner();}finally{anchor=_saved;}
-}
-function vScorecardInner(){
-  if(ALL_ROWS.length===0)return'<div class="empty-state"><div class="empty-ic">🏆</div><div style="font-size:13px;font-weight:600;margin-bottom:6px;">No performance data loaded</div><div style="font-size:11px;color:var(--ink4);">Upload your Mapping + Performance CSVs first.</div></div>';
-  // ── (1) Build candidate ad list from pinned campaigns ──
-  const pinnedArr=[...scPinnedCamps];
-  let adIds=Object.keys(MAP_AD).filter(id=>{
-    const cid=adCamp(id);
-    if(!pinnedArr.includes(cid))return false;
-    // (5) campaign/adset/ad filters
-    if(scCamp!=='all'&&cid!==scCamp)return false;
-    if(scAset!=='all'&&adAset(id)!==scAset)return false;
-    if(scAd!=='all'&&id!==scAd)return false;
-    return true;
-  });
-  // search filter
-  if(scSearch){const q=scSearch.toLowerCase();adIds=adIds.filter(id=>{const hay=(MAP_AD[id]?.s||'')+' '+id+' '+(MAP_ASET[adAset(id)]?.s||'')+' '+(MAP_CAMP[adCamp(id)]?.s||'');return hay.toLowerCase().includes(q);});}
-  let rows=[];
-  adIds.forEach(id=>{
-    const r=creativeFlagAndFatigue(id);
-    if(!r)return; // spend gate failed
-    if(scFilter!=='all'&&r.flag!==scFilter)return;
-    rows.push(r);
-  });
-  rows.sort((a,b)=>SC_RANK[a.flag]-SC_RANK[b.flag]||b.spend-a.spend);
-  // counts
-  const counts={winner:0,pwinner:0,monitor:0,paused:0,fatigue:0};
-  rows.forEach(r=>{counts[r.flag]=(counts[r.flag]||0)+1;if(r.fatiguing)counts.fatigue++;});
-  // ── Pinned campaigns manager ──
-  const allCamps=Object.keys(MAP_CAMP);
-  let h=`<div class="banner">🏆 Creative Scorecard · Pinned campaigns only · Last 60 days · Min ₹1,000 spend gate · CAC shown only when ≥20 matured trials · Hook/Hold from uploaded CSV.</div>`;
-  // pinned camps manager
-  h+=`<div style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:14px;">
-    <div style="font-size:11px;font-weight:700;color:var(--ink2);margin-bottom:8px;">📌 Pinned Campaigns <span style="font-size:9px;color:var(--ink4);font-weight:400;">(scorecard shows only these)</span></div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">`;
-  [...scPinnedCamps].forEach(cid=>{
-    const cnm=MAP_CAMP[cid]?.s||cid;
-    const isDefault=SC_DEFAULT_CAMPS.includes(cid);
-    h+=`<span style="display:inline-flex;align-items:center;gap:5px;background:var(--brandbg);border:1px solid rgba(99,86,240,.2);border-radius:6px;padding:3px 8px;font-size:10px;font-weight:600;color:var(--brand);" title="${cid}">${cnm.slice(0,30)}${cnm.length>30?'…':''} ${isDefault?'<span style="font-size:8px;color:var(--ink4)">(default)</span>':''} <span style="cursor:pointer;color:var(--bad);font-weight:800;margin-left:2px;" onclick="scPinnedCamps.delete('${cid}');render()">✕</span></span>`;
-  });
-  // add campaign dropdown
-  const unpinned=allCamps.filter(c=>!scPinnedCamps.has(c));
-  if(unpinned.length){
-    h+=`<select style="font-size:10px;padding:4px 8px;border:1px solid var(--line2);border-radius:6px;color:var(--ink2);background:var(--panel);" onchange="if(this.value){scPinnedCamps.add(this.value);render();}this.value='';">
-      <option value="">+ Add campaign…</option>`;
-    unpinned.forEach(c=>{h+=`<option value="${c}">${(MAP_CAMP[c]?.s||c).slice(0,40)}</option>`;});
-    h+=`</select>`;
-  }
-  h+=`</div></div>`;
-  // summary cards
-  h+=`<div class="act-summary">
-    <div class="sum-card green"><div class="sum-big">${counts.winner}</div><div class="sum-label">Winner</div><div class="sum-detail">CAC ≤ ₹450</div></div>
-    <div class="sum-card neutral"><div class="sum-big" style="color:var(--info)">${counts.pwinner}</div><div class="sum-label">Potential Winner</div><div class="sum-detail">CPT ≤ ₹120, CAC building</div></div>
-    <div class="sum-card mod"><div class="sum-big">${counts.monitor}</div><div class="sum-label">Monitor</div><div class="sum-detail">CPT ₹120–200 or CAC ₹450–500</div></div>
-    <div class="sum-card red"><div class="sum-big">${counts.fatigue}</div><div class="sum-label">Fatiguing</div><div class="sum-detail">CTR↓ + CPT↑≥20% + CAC↑≥20%</div></div>
-  </div>`;
-  // ── (5) filter bar — own campaign/adset/ad dropdowns ──
-  const scCampOpts=pinnedArr.map(c=>`<option value="${c}" ${scCamp===c?'selected':''}>${(MAP_CAMP[c]?.s||c).slice(0,35)}</option>`).join('');
-  const asInScope=Object.keys(MAP_ASET).filter(a=>scCamp==='all'?pinnedArr.includes(MAP_ASET[a]?.c):MAP_ASET[a]?.c===scCamp);
-  const scAsetOpts=asInScope.map(a=>`<option value="${a}" ${scAset===a?'selected':''}>${MAP_ASET[a]?.s||a}</option>`).join('');
-  const adInScope=Object.keys(MAP_AD).filter(id=>pinnedArr.includes(adCamp(id))&&(scCamp==='all'||adCamp(id)===scCamp)&&(scAset==='all'||adAset(id)===scAset));
-  const scAdOpts=adInScope.map(id=>`<option value="${id}" ${scAd===id?'selected':''}>${MAP_AD[id]?.s||id}</option>`).join('');
-  h+=`<div class="cs-filter-bar">
-    <span class="ctrl-label">Status</span>
-    <div class="seg" id="scStatusSeg">
-      <button class="seg-btn ${scFilter==='all'?'on':''}" data-scf="all">All</button>
-      <button class="seg-btn ${scFilter==='winner'?'on':''}" data-scf="winner">Winner</button>
-      <button class="seg-btn ${scFilter==='pwinner'?'on':''}" data-scf="pwinner">Pot. Winner</button>
-      <button class="seg-btn ${scFilter==='monitor'?'on':''}" data-scf="monitor">Monitor</button>
-      <button class="seg-btn ${scFilter==='paused'?'on':''}" data-scf="paused">Paused</button>
-    </div>
-    <select class="fsel" id="scCampSel"><option value="all">All Pinned Campaigns</option>${scCampOpts}</select>
-    <select class="fsel" id="scAsetSel"><option value="all">All Ad Sets</option>${scAsetOpts}</select>
-    <select class="fsel" id="scAdSel"><option value="all">All Ads</option>${scAdOpts}</select>
-    <div class="search-box" style="min-width:180px;"><input id="scSearch" placeholder="Search ad / adset / campaign…" value="${scSearch.replace(/"/g,'&quot;')}"></div>
-    <label class="chip" style="border-color:#3a7d3a;color:#3a7d3a;font-size:10px;">📊 Hook/Hold CSV<input type="file" accept=".csv" id="scHookCsv" style="display:none;"></label>
-  </div>`;
-  if(!rows.length){h+=`<div class="empty-state"><div class="empty-ic">🔍</div><div>No creatives match current filters.<br><span style="font-size:11px;color:var(--ink4);">Check pinned campaigns or relax filters. Min ₹1,000 spend in last 60 days required.</span></div></div>`;return h;}
-  // ── Table ──
-  const mn=(s,id)=>`<div class="ent-nm" title="${s||id}">${(s||id).slice(0,28)}${(s||id).length>28?'…':''}</div><div class="ent-id">${id}</div>`;
-  h+=`<div class="act-tbl-wrap"><div class="act-tbl-scroll"><table class="act led"><thead>
-    <tr class="led-grouphead">
-      <th class="led-c-col l" rowspan="2">Ad</th>
-      <th class="l" rowspan="2">Ad Set</th>
-      <th class="l" rowspan="2">Campaign</th>
-      <th rowspan="2">Flag</th>
-      <th rowspan="2">Fatigue</th>
-      <th class="grp-div" colspan="3">Spend (D-1/D-2/D-3)</th>
-      <th class="grp-div" colspan="3">CPT D28-adj (D-1/D-2/D-3)</th>
-      <th class="grp-div" colspan="3">CTR % (D-1/D-2/D-3)</th>
-      <th class="grp-div">Total<br>60d</th>
-      <th>CPT<br>60d</th>
-      <th>CAC<br>matured</th>
-      <th class="grp-div">Hook%</th>
-      <th>Hold%</th>
-      <th class="grp-div" colspan="3">AR% (D28T÷D35AP)</th>
-    </tr>
-    <tr class="led-subhead">
-      <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
-      <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
-      <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
-      <th class="grp-div">₹</th><th>₹</th><th>₹</th>
-      <th class="grp-div">%</th><th>%</th>
-      <th class="grp-div">W-1</th><th>W-2</th><th>W-3</th>
-    </tr></thead><tbody>`;
-  rows.forEach(r=>{
-    const flagBadge=`<span class="cs-badge csb-${r.flag}">${r.label}</span>`;
-    const fatigBadge=r.fatiguing?`<span class="cs-badge csb-fatigue" title="${r.fatigueDetail}">⚠ FATIGUE</span>`:'<span style="color:var(--ink4);font-size:9px;">—</span>';
-    const cacDisp=r.cac!=null?`<div class="cell val-${cls(r.cac,T.cac.g,T.cac.a,0)}">${moneyc(r.cac)}</div>`:r.cacLowBase?`<div class="cell lowbase">thin<span class="lowbase-tag">n${r.cacTrials}</span></div>`:'<div class="cell" style="color:var(--ink4);font-size:9px;">immature</div>';
-    const arCell=v=>v!=null?`<div class="cell val-${cls(v,T.apr.g,T.apr.a,1)}">${v.toFixed(1)}%</div>`:'<div class="cell">—</div>';
-    const hookDisp=r.hookRate!=null?`<div class="cell val-${cls(r.hookRate,T.hook.g,T.hook.a,1)}">${r.hookRate.toFixed(1)}%</div>`:'<div class="cell" style="color:var(--ink4);font-size:9px;">upload CSV</div>';
-    const holdDisp=r.holdRate!=null?`<div class="cell val-${cls(r.holdRate,T.hold.g,T.hold.a,1)}">${r.holdRate.toFixed(1)}%</div>`:'<div class="cell" style="color:var(--ink4);font-size:9px;">—</div>';
-    const flc=r.flag==='winner'?'green':r.flag==='pwinner'?'green':r.flag==='monitor'?'mod':'';
-    h+=`<tr class="led-row ${flc?'flag-l-'+flc:''}">
-      <td class="led-id led-c-col">${mn(r.adNm,r.adId)}</td>
-      <td class="led-id">${mn(MAP_ASET[r.asId]?.s,r.asId)}</td>
-      <td class="led-id">${mn(MAP_CAMP[r.campId]?.s,r.campId)}</td>
-      <td><div class="cell">${flagBadge}</div></td>
-      <td><div class="cell">${fatigBadge}</div></td>
-      <td class="grp-div">${dirCell(r.d1Spend,r.d2Spend,false,moneyc)}</td>
-      <td>${dirCell(r.d2Spend,r.d3Spend,false,moneyc)}</td>
-      <td><div class="cell">${moneyc(r.d3Spend)}</div></td>
-      <td class="grp-div">${dirCell(r.d1Cpt,r.d2Cpt,true,moneyc)}</td>
-      <td>${dirCell(r.d2Cpt,r.d3Cpt,true,moneyc)}</td>
-      <td>${cptCell(r.d3Cpt)}</td>
-      <td class="grp-div">${dirCell(r.d1Ctr,r.d2Ctr,false,v=>v!=null?v.toFixed(2)+'%':'—')}</td>
-      <td>${dirCell(r.d2Ctr,r.d3Ctr,false,v=>v!=null?v.toFixed(2)+'%':'—')}</td>
-      <td><div class="cell ${r.d3Ctr!=null?'val-'+cls(r.d3Ctr,T.ctr.g,T.ctr.a,1):''}">${r.d3Ctr!=null?r.d3Ctr.toFixed(2)+'%':'—'}</div></td>
-      <td class="grp-div"><div class="cell">${moneyc(r.spend)}</div></td>
-      <td>${cptCell(r.cpt)}</td>
-      <td>${cacDisp}</td>
-      <td class="grp-div">${hookDisp}</td>
-      <td>${holdDisp}</td>
-      <td class="grp-div">${arCell(r.arW1)}</td>
-      <td>${arCell(r.arW2)}</td>
-      <td>${arCell(r.arW3)}</td>
-    </tr>`;
-  });
-  h+=`</tbody></table></div></div>`;
-  return h;
-}
-// GOOGLE MAPPING CSV — adset is terminal; create self-referential synthetic leaf in MAP_AD
-// so all existing aggRangeFor / entRows / projAutopaysFor functions work unchanged
-$('#gmapCsv').addEventListener('change',function(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();
-  rd.onload=ev=>{const lines=ev.target.result.trim().split(/\r?\n/);const H=splitCSV(lines[0]).map(x=>x.trim().replace(/^"|"$/g,''));
-    const gi=names=>{for(const n of names){const i=H.findIndex(h=>h.toLowerCase()===n.toLowerCase());if(i>=0)return i;}return-1;};
-    const iAs=gi(['Ad set ID','Adset ID','Ad Set ID']),iC=gi(['Campaign ID']),iAsN=gi(['Ad set name','Adset Name','Ad Set name']),iCN=gi(['Campaign name','Campaign Name']);
-    let n=0;
-    for(let i=1;i<lines.length;i++){const v=splitCSV(lines[i]);if(v.length<2)continue;
-      const asId=v[iAs]?.trim().replace(/^"|"$/g,'');const cId=v[iC]?.trim().replace(/^"|"$/g,'');if(!asId||!cId)continue;
-      const asN=(v[iAsN]||'').trim().replace(/^"|"$/g,'')||asId;const cN=(v[iCN]||'').trim().replace(/^"|"$/g,'')||cId;
-      if(!MAP_CAMP[cId])MAP_CAMP[cId]={n:cN,s:tr(cN,42),acct:'google',t:'google'};
-      if(!MAP_ASET[asId])MAP_ASET[asId]={s:tr(asN,38),c:cId,acct:'google',source:'google'};
-      MAP_AD[asId]={s:tr(asN,38),as:asId,c:cId,acct:'google',source:'google'}; // synthetic leaf: as=self
-      n++;}
-    $('#mapStat').textContent+=' · +'+n+' Google adsets';$('#mapDot').className='us-dot ok';
-    e.target.value='';render();};rd.readAsText(f);});
-// GOOGLE PERFORMANCE CSV — "Ad ID" column carries the ADSET id for Google rows
-$('#gperfCsv').addEventListener('change',function(e){const files=[...e.target.files];if(!files.length)return;
-  let done=0;
-  files.forEach(f=>{const rd=new FileReader();rd.onload=ev=>{
-    const lines=ev.target.result.trim().split(/\r?\n/);const H=splitCSV(lines[0]).map(x=>x.trim());const gi=n=>H.indexOf(n);
-    for(let i=1;i<lines.length;i++){const v=splitCSV(lines[i]);if(v.length<5)continue;
-      const N=idx=>{const x=parseFloat(v[idx]?.trim());return isNaN(x)?0:x;};
-      const asId=(v[gi('Ad ID')]||'').trim();
-      const row={ad_id:asId,source:'google',date:normDate(v[gi('Date')]),impressions:N(gi('Impressions')),clicks:N(gi('Clicks')),installs:N(gi('Installs appsflyer')),cost:N(gi('Cost')),signups:N(gi('Unique users ltv days cumulative appsflyer signed_up')),trials:N(gi('Unique users ltv days cumulative appsflyer trial_started')),autopays:N(gi('Unique users ltv days cumulative appsflyer sub_amt_deducted')),d0:N(gi('Unique users 0 days cumulative appsflyer trial_started')),d7:N(gi('Unique users 6 days cumulative appsflyer trial_started')),d14:N(gi('Unique users 13 days cumulative appsflyer trial_started')),d28:N(gi('Unique users 27 days cumulative appsflyer trial_started'))};
-      if(/^[A-Za-z0-9_\-]{4,}$/.test(row.ad_id)&&/^\d{4}-\d{2}-\d{2}$/.test(row.date)){
-        if(MAP_AD[asId])MAP_AD[asId].source='google'; // ensure source tag on leaf
-        ALL_ROWS.push(row);}}
-    done++;if(done===files.length){
-      const ds=ALL_ROWS.map(r=>r.date).filter(Boolean).sort();if(ds.length){anchor=ds[ds.length-1];dataMaxDate=ds[ds.length-1];$('#anchor').value=anchor;}
-      $('#perfStat').textContent+=' · +Google';$('#perfDot').className='us-dot ok';
+    const lines=ev.target.result.trim().split(/\r?\n/);
+    const H=splitCSV(lines[0]).map(x=>x.trim());
+    const isGoogle=H[0]==='Adset ID'; // key detection
+    const gi=n=>H.indexOf(n);
+    const iId=0; // first column is always the ID (Adset ID or Ad ID)
+    for(let i=1;i<lines.length;i++){
+      const v=splitCSV(lines[i]);if(v.length<5)continue;
+      const N=idx=>{const x=parseFloat((v[idx]||'').trim());return isNaN(x)?0:x;};
+      const rawId=(v[iId]||'').trim();
+      const row={
+        ad_id:rawId,
+        source:isGoogle?'google':'facebook',
+        date:normDate(v[gi('Date')]),
+        impressions:N(gi('Impressions')),
+        clicks:N(gi('Clicks')),
+        installs:N(gi('Installs appsflyer')),
+        cost:N(gi('Cost')),
+        signups:N(gi('Unique users ltv days cumulative appsflyer signed_up')),
+        trials:N(gi('Unique users ltv days cumulative appsflyer trial_started')),
+        autopays:N(gi('Unique users ltv days cumulative appsflyer sub_amt_deducted')),
+        d0:N(gi('Unique users 0 days cumulative appsflyer trial_started')),
+        d7:N(gi('Unique users 6 days cumulative appsflyer trial_started')),
+        d14:N(gi('Unique users 13 days cumulative appsflyer trial_started')),
+        d28:N(gi('Unique users 27 days cumulative appsflyer trial_started'))};
+      // Validation: ID must be non-empty numeric-ish string, date must be valid
+      if(rawId&&rawId.length>=4&&/^\d{4}-\d{2}-\d{2}$/.test(row.date)){
+        // For Google rows: ensure the synthetic leaf exists (in case mapping not uploaded yet — create stub)
+        if(isGoogle&&!MAP_AD[rawId]){
+          MAP_AD[rawId]={s:rawId,as:rawId,c:'',acct:'google',source:'google'};
+        }
+        // Tag source onto existing leaf
+        if(MAP_AD[rawId])MAP_AD[rawId].source=isGoogle?'google':'facebook';
+        newRows.push(row);}}
+    done++;
+    if(done===files.length){
+      ALL_ROWS=newRows; // atomic replace — no partial-wipe race condition
+      const ds=ALL_ROWS.map(r=>r.date).filter(Boolean).sort();
+      if(ds.length){anchor=ds[ds.length-1];dataMaxDate=ds[ds.length-1];$('#anchor').value=anchor;}
+      const gRows=ALL_ROWS.filter(r=>r.source==='google').length;
+      const mRows=ALL_ROWS.length-gRows;
+      const mNew=ALL_ROWS.filter(r=>r.source!=='google'&&classifyAcct(r.ad_id)==='new').length;
+      $('#perfStat').textContent=`${ALL_ROWS.length.toLocaleString()} rows · Meta: ${mRows.toLocaleString()} (${mNew.toLocaleString()} new) · Google: ${gRows.toLocaleString()} · ${ds[0]||'?'} → ${ds[ds.length-1]||'?'}`;
+      $('#perfDot').className='us-dot ok';
       $('#updated').textContent='Updated: '+new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
       e.target.value='';render();}};rd.readAsText(f);});});
+
 // CONTROLS
 $$('.nav-item').forEach(n=>n.onclick=()=>setView(n.dataset.view));
-$('#acctDD').onchange=e=>{acct=e.target.value;fCamp='all';fAset='all';fAd='all';render();};
+$('#acctDD').onchange=e=>{acct=e.target.value;fCamp='all';fAset='all';fAd='all';AGG_DIRTY=true;render();};
 $('#granSeg').onclick=e=>{if(e.target.dataset.gran){gran=e.target.dataset.gran;$$('#granSeg .seg-btn').forEach(b=>b.classList.toggle('on',b===e.target));render();}};
 $('#numCols').onchange=e=>{numCols=Math.max(4,Math.min(12,parseInt(e.target.value)||7));e.target.value=numCols;render();};
 $('#anchor').onchange=e=>{anchor=e.target.value;render();};
