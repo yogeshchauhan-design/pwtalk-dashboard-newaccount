@@ -243,8 +243,10 @@ table.act.led{font-size:10px;}
 .led-rundays .cell{font-family:var(--m);color:var(--ink3);font-size:10px;}
 .cac-actual{font-size:8.5px;color:var(--ink4);font-family:var(--m);margin-top:1px;line-height:1.2;}
 /* Highlighted metric rows (estimated/projected) */
-.mtx tbody tr.row-highlight td{background:rgba(99,86,240,0.06)!important;}
-.mtx tbody tr.row-highlight td.metric-name{color:var(--brand);font-weight:700;}
+.mtx tbody tr.row-highlight td{background:#e8f0fe!important;}
+.mtx tbody tr.row-highlight td.metric-name{background:#dbe7fd!important;color:#2b5fcc;font-weight:700;}
+.mtx tbody tr.row-highlight:hover td{background:#d4e3fd!important;}
+.mtx tbody tr.row-highlight:hover td.metric-name{background:#c8d9fc!important;}
 /* ── Creative Scorecard ── */
 .cs-filter-bar{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;}
 .cs-badge{display:inline-block;font-size:9px;font-weight:800;padding:2px 8px;border-radius:5px;letter-spacing:.3px;text-transform:uppercase;white-space:nowrap;}
