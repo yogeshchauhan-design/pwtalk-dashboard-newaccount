@@ -489,7 +489,7 @@ function periods(){const out=[];const a=new Date(anchor);
 function aggRangeFor(from,to,entKey,entId){
   const rs=ALL_ROWS.filter(r=>{if(r.date<from||r.date>to)return false;if(!inAcctFilter(r.ad_id))return false;
     if(entKey==='campaign')return adCamp(r.ad_id)===entId;if(entKey==='adset')return adAset(r.ad_id)===entId;if(entKey==='ad')return r.ad_id===entId;return false;});
-  const s={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0};
+  const s={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0,ap7:0,ap14:0,ap35:0};
   rs.forEach(r=>{for(let k in s)s[k]+=r[k]||0;});return s;}
 // aggregate ALL entities in current account scope (portfolio) for a window
 function aggPortfolio(from,to){
@@ -566,9 +566,25 @@ const METRIC_DEFS={
   cac:[
     {k:'autopay',label:'Autopay (actual)',fmt:num,calc:s=>s.autopays,early:true,abs:true},
     {k:'apr',label:'Autopay Rate %',fmt:pct,calc:s=>s.trials?s.autopays/s.trials*100:null,th:[T.apr.g,T.apr.a,1],early:true},
-    {k:'cac',label:'CAC (Current / Lifetime)',fmt:money,calc:s=>s.autopays?s.cost/s.autopays:null,th:[T.cac.g,T.cac.a,0],early:true},
-    {k:'cac_d28',label:'CAC (D28) = CPT(D28)÷AR(D28)',fmt:money,calc:s=>(s.d28&&s.autopays&&s.trials)?Math.round((s.d28?s.cost/s.d28:0)/(s.autopays/s.trials||1)):null,early:true},
-    {k:'cac_d35proj',label:'CAC (D35 proj) = cost÷AP(D35)',fmt:money,calc:s=>(s.d28&&s.autopays)?Math.round(s.cost/(s.autopays*(AP_CURVE.facebook.D35/AP_CURVE.facebook.D7))):null,early:true},
+    // ── 4 CAC rows per spec: simplify CPT(Dn)/AR(Dn) = cost/ap_at_window ──
+    {k:'cac_d0',label:'CAC(D0) = cost÷AP(D7)',fmt:money,
+      calc:s=>s.ap7&&s.d0?Math.round(s.cost/s.ap7):null,
+      th:[T.cac.g,T.cac.a,0],early:true},
+    {k:'cac_d7',label:'CAC(D7) = cost÷Max(AP14,curve×AP7)',fmt:money,
+      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;
+        const c=AP_CURVE[ctx&&ctx.src||'facebook'];
+        const ap=Math.max(s.ap14,c.D14*s.ap7);
+        return ap?Math.round(s.cost/ap):null;},
+      th:[T.cac.g,T.cac.a,0],early:true},
+    {k:'cac_d28',label:'CAC(D28) = cost÷Max(AP35,curve×AP7)',fmt:money,
+      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;
+        const c=AP_CURVE[ctx&&ctx.src||'facebook'];
+        const ap=Math.max(s.ap35,c.D35*s.ap7);
+        return ap?Math.round(s.cost/ap):null;},
+      th:[T.cac.g,T.cac.a,0],early:true},
+    {k:'cac_life',label:'CAC(Lifetime) = cost÷AP(collected)',fmt:money,
+      calc:s=>s.autopays?Math.round(s.cost/s.autopays):null,
+      th:[T.cac.g,T.cac.a,0],early:true},
   ],
   autopayco:[
     {k:'ap_d7',label:'Autopay D7 (actual)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays):null,abs:true},
@@ -576,10 +592,21 @@ const METRIC_DEFS={
     {k:'ap_d21',label:'Autopay D21 (proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D21)):null,abs:true},
     {k:'ap_d28',label:'Autopay D28 (proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D28)):null,abs:true},
     {k:'ap_d35',label:'Autopay D35 (proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D35)):null,abs:true},
-    {k:'ar_d0',label:'AR(D0) = AP÷D0est',fmt:pct,calc:s=>(s.d0&&s.autopays)?(s.autopays/(s.d0*EST.d28)*100):null,th:[T.apr.g,T.apr.a,1]},
-    {k:'ar_d7',label:'AR(D7) = AP÷D7est',fmt:pct,calc:s=>(s.d7&&s.autopays)?(s.autopays/(s.d7*(EST.d28/EST.d7))*100):null,th:[T.apr.g,T.apr.a,1]},
-    {k:'ar_d14',label:'AR(D14) = AP÷D14est',fmt:pct,calc:s=>(s.d14&&s.autopays)?(s.autopays/(s.d14*(EST.d28/EST.d14))*100):null,th:[T.apr.g,T.apr.a,1]},
-    {k:'ar_d28',label:'AR(D28) = AP÷D28',fmt:pct,calc:s=>(s.d28&&s.autopays)?(s.autopays/s.d28*100):null,th:[T.apr.g,T.apr.a,1]},
+    // AR ladder — correct formula (Max of actual vs projected on both sides)
+    {k:'ar_d0',label:'AR(D0) = ap7÷d0',fmt:pct,
+      calc:s=>(s.d0&&s.ap7)?(s.ap7/s.d0*100):null,th:[T.apr.g,T.apr.a,1]},
+    {k:'ar_d7',label:'AR(D7) = Max(ap14,curve×ap7)÷Max(d7,d0×1.105)',fmt:pct,
+      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;
+        const c=AP_CURVE[ctx&&ctx.src||'facebook'];
+        const num=Math.max(s.ap14,c.D14*s.ap7);
+        const den=Math.max(s.d7||0,s.d0*EST.d7);
+        return den?num/den*100:null;},th:[T.apr.g,T.apr.a,1]},
+    {k:'ar_d28',label:'AR(D28) = Max(ap35,curve×ap7)÷Max(d28,d0×1.17)',fmt:pct,
+      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;
+        const c=AP_CURVE[ctx&&ctx.src||'facebook'];
+        const num=Math.max(s.ap35,c.D35*s.ap7);
+        const den=Math.max(s.d28||0,s.d0*EST.d28);
+        return den?num/den*100:null;},th:[T.apr.g,T.apr.a,1]},
   ],
   video:[
     {k:'hook',label:'Hook Rate (3s÷Impr)',fmt:pct,calc:()=>null,vid:'hook',th:[T.hook.g,T.hook.a,1]},
@@ -591,7 +618,7 @@ let rowVisible={};
 Object.keys(METRIC_DEFS).forEach(g=>METRIC_DEFS[g].forEach(m=>{rowVisible[m.k]=!m.abs;}));
 rowVisible['drr']=true;
 // autopay cohort group: show the AR ladder by default, keep raw autopay counts off (abs)
-['ar_d0','ar_d7','ar_d14','ar_d28'].forEach(k=>rowVisible[k]=true);
+['ar_d0','ar_d7','ar_d28','cac_d0','cac_d7','cac_d28','cac_life'].forEach(k=>rowVisible[k]=true);
 function setView(v){view=v;$$('.nav-item').forEach(n=>n.classList.toggle('on',n.dataset.view===v));
   const ti={campaign:['Campaigns','Time-series matrix'],adset:['Ad Sets','Time-series matrix'],ad:['Ads','Time-series matrix'],creative:['Video Metrics','Hook & hold · Jun 1–18'],placement:['Placements','Platform split · Jun 1–18'],demo:['Demographics','Age & gender · Jun 1–18'],actions:['Actionables','Running vs Paused · Scale / Pause decisions only'],scorecard:['Creative Scorecard','Meta only · Winner / Potential Winner / Monitor / Paused · Fatigue badge']};
   $('#pgTitle').textContent=ti[v][0];$('#pgSub').textContent=ti[v][1];render();}
@@ -651,11 +678,11 @@ function buildAggCache(){
     if(!byDate[dt])byDate[dt]={ad:{},as:{},camp:{}};
     const D=byDate[dt];
     function add(bucket,id){
-      if(!D[bucket][id])D[bucket][id]={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0};
+      if(!D[bucket][id])D[bucket][id]={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0,ap7:0,ap14:0,ap35:0};
       const s=D[bucket][id];
       s.impressions+=r.impressions||0;s.clicks+=r.clicks||0;s.installs+=r.installs||0;
       s.cost+=r.cost||0;s.signups+=r.signups||0;s.trials+=r.trials||0;s.autopays+=r.autopays||0;
-      s.d0+=r.d0||0;s.d7+=r.d7||0;s.d14+=r.d14||0;s.d28+=r.d28||0;}
+      s.d0+=r.d0||0;s.d7+=r.d7||0;s.d14+=r.d14||0;s.d28+=r.d28||0;s.ap7+=r.ap7||0;s.ap14+=r.ap14||0;s.ap35+=r.ap35||0;}
     add('ad',adid);if(asid)add('as',asid);if(cid)add('camp',cid);});
   AGG_CACHE={byDate};AGG_DIRTY=false;}
 
@@ -689,7 +716,8 @@ function aggPortfolioFast(from,to,srcFilter){
 // Ad tab:       1 grandparent campaign + 1 parent adset + 1 filtered ad table
 // Filters ONLY affect the bottom entity table, not the portfolio/parent rows
 
-function mtxTableHTML(title,sums,P,extraRows,tagHtml){
+function mtxTableHTML(title,sums,P,extraRows,tagHtml,entitySrc){
+  const _entSrc=entitySrc||'facebook';
   // Render a single metric table for one entity across periods
   let h=`<div style="font-size:12px;font-weight:700;color:var(--ink2);padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel2);display:flex;align-items:center;gap:8px;">${tagHtml||''}${title}</div>`;
   h+=`<div class="mtx-scroll"><table class="mtx"><thead><tr>
@@ -711,7 +739,7 @@ function mtxTableHTML(title,sums,P,extraRows,tagHtml){
           const t=s[tk]||0;if(!t)return null;
           return extraRows?extraRows[idx].projAP[apt]/t*100:null;}
         const _per=P[idx]||P[0];const _pDays=Math.max(1,Math.round((new Date(_per.to)-new Date(_per.from))/86400000)+1);
-        return md.calc(s,{totCost:s.cost,periodDays:_pDays});});
+        return md.calc(s,{totCost:s.cost,periodDays:_pDays,src:_entSrc||'facebook'});});
       const v0=vals[0],v1=vals[1];let dHTML='—';
       if(v0!=null&&v1!=null&&v1!==0&&!isNaN(v0)&&!isNaN(v1)){
         const d=(v0-v1)/v1*100,up=d>0,hi=md.th?md.th[2]===1:true,good=hi?up:!up;
@@ -766,7 +794,7 @@ function entityTableHTML(entKey,entId,P){
       <span style="font-size:9.5px;color:var(--ink4);font-family:var(--m);margin-left:4px;">${entId}</span>
       ${latestCPT?`<span class="ent-cpt" style="background:var(--${cls(latestCPT,T.cpt.g,T.cpt.a,0)}bg);color:var(--${cls(latestCPT,T.cpt.g,T.cpt.a,0)});">CPT ${money(latestCPT)}</span>`:''}
       <span class="ent-spend">${money(latest.cost)}</span></div>
-    ${mtxTableHTML('',sums,P,null,'')}
+    ${mtxTableHTML('',sums,P,null,'',src)}
   </div>`;}
 
 function emptyMetricRow(P){
@@ -918,14 +946,36 @@ function entMetrics(entKey,entId){
   const arAllMatured = cohortAll.trials? ap_allMatured/cohortAll.trials*100 : null;
   // ── #2 AR cohort ladder: AR(Dn)=Dn trials ÷ D(n+7) projected autopays ──
   // headline AR = most-matured cohort available
-  const arLadder={};
-  [['D0','d0','D7'],['D7','d7','D14'],['D14','d14','D21'],['D28','d28','D35']].forEach(([lbl,tk,apTarget])=>{
-    const t=cohortAll[tk]||0; const ap=t>0? projAutopaysFor('2000-01-01',matCut,entKey,entId,apTarget):0;
-    arLadder[lbl]= t>0? ap/t*100 : null;
-  });
-  // most matured available cohort with data, for headline
+  // ── AR ladder — correct formula: Max(actual,projected) on both sides ──
+  // Use cohortAll (all matured cohorts) for ap7/ap14/ap35 aggregation
+  const cohortAp7  = projAutopaysFor('2000-01-01',matCut,entKey,entId,'D7');
+  const cohortAp14 = projAutopaysFor('2000-01-01',matCut,entKey,entId,'D14');
+  const cohortAp35 = projAutopaysFor('2000-01-01',matCut,entKey,entId,'D35');
+  // Also fetch actual accumulated ap columns from raw sums
+  const _rawCohort = aggRangeFor('2000-01-01',matCut,entKey,entId);
+  const rawAp7  = _rawCohort.ap7  || cohortAp7;   // actual D7 autopays (fall back to projected)
+  const rawAp14 = _rawCohort.ap14 || cohortAp14;
+  const rawAp35 = _rawCohort.ap35 || cohortAp35;
+  // AR(D0) = ap7_actual / d0_actual
+  const arD0 = cohortAll.d0 ? rawAp7/cohortAll.d0*100 : null;
+  // AR(D7) = Max(ap14_actual, 1.30×ap7) / Max(d7_actual, d0×1.105)
+  const _emCurve=AP_CURVE[srcOf(entId)||'facebook'];
+  const arD7num = Math.max(rawAp14, _emCurve.D14*rawAp7);
+  const arD7den = Math.max(cohortAll.d7||0, cohortAll.d0*EST.d7||0);
+  const arD7 = arD7den ? arD7num/arD7den*100 : null;
+  // AR(D28) = Max(ap35_actual, curve.D35×ap7) / Max(d28_actual, d0×1.17)
+  const arD28num = Math.max(rawAp35, _emCurve.D35*rawAp7);
+  const arD28den = Math.max(cohortAll.d28||0, cohortAll.d0*EST.d28||0);
+  const arD28 = arD28den ? arD28num/arD28den*100 : null;
+  // CAC at each window = cost / ap_at_window (CPT/AR cancels)
+  const cacD0  = rawAp7   ? cohortAll.cost/rawAp7   : null;
+  const cacD7  = arD7num  ? cohortAll.cost/arD7num  : null;
+  const cacD28 = arD28num ? cohortAll.cost/arD28num : null;
+  const cacLife= (cohortAll.autopays||_rawCohort.autopays) ? cohortAll.cost/(cohortAll.autopays||_rawCohort.autopays) : null;
+  // Headline AR = most matured available
+  const arLadder={D0:arD0,D7:arD7,D28:arD28};
   let headlineAR=null,headlineARLabel='—';
-  ['D28','D14','D7','D0'].forEach(l=>{if(headlineAR===null&&arLadder[l]!=null){headlineAR=arLadder[l];headlineARLabel='AR('+l+')';}});
+  ['D28','D7','D0'].forEach(l=>{if(headlineAR===null&&arLadder[l]!=null){headlineAR=arLadder[l];headlineARLabel='AR('+l+')';}});
   const arBase = decCohort.trials;
   const arTrust = arBase>=ACT.minTrialsForAR;
   const matured = decCohort.cost>0 && ap_decCohort>0 && maturedDaysOfHistory>=7;
@@ -1085,7 +1135,7 @@ function entMetrics(entKey,entId){
   return {entKey,entId,isPaused,matured,arTrust,flag,verdict,issues,suppressed,suppressReason,
     cost:life.cost,trialsActual,trialsActualWk:arBase,maturedDaysOfHistory,decWindowLabel,
     cptTill,cptWeek,cptΔ,cacTill,cacWeekEst,arTill,arWeekEst,s2tTill,s2tWeek,
-    arLadder,headlineAR,headlineARLabel,runDays:rd,drrLast7,drrPrev7,drrW2,drrΔ,cacVsAcct,cptVsAcct,
+    arLadder,arD0,arD7,arD28,cacD0,cacD7,cacD28,cacLife,headlineAR,headlineARLabel,runDays:rd,drrLast7,drrPrev7,drrW2,drrΔ,cacVsAcct,cptVsAcct,
     acctCac:bench.cac,acctCpt:bench.cpt,
     cptL7,cptW1,cptW2,cac_w1,cac_15,cac_30,cacActTill,cacAct_w1,cacAct_15,cacAct_30,
     s2tL7,s2tW1,s2tW2,csTill,csL7,csW1,csW2,
@@ -1439,11 +1489,33 @@ function creativeFlagAndFatigue(adId){
   const maturedDays=firstSpend?Math.max(0,daysBetween_abs(matCut,firstSpend)):0;
   const matured=maturedDays>=7&&cohort60.cost>0;
   const ap_60=projAutopaysFor(win60from,matCut,'ad',adId);
-  // ── (4) CAC only when ≥20 matured trials ──
+  // ── Correct AR/CAC using new formula ──
+  // Aggregate actual ap columns for the 60d window
+  const _rawLife=aggRangeFor(win60from,win60to,'ad',adId);
+  const rawAp7_sc  = _rawLife.ap7;
+  const rawAp14_sc = _rawLife.ap14;
+  const rawAp35_sc = _rawLife.ap35;
+  // AR(D0)
+  const arD0_sc  = (_rawLife.d0&&rawAp7_sc) ? rawAp7_sc/_rawLife.d0*100 : null;
+  // AR(D7) = Max(ap14, 1.30×ap7) / Max(d7, d0×1.105)
+  const _scCurve=AP_CURVE[MAP_AD[adId]?.source||srcOf(adId)||'facebook'];
+  const arD7num_sc = rawAp7_sc ? Math.max(rawAp14_sc, _scCurve.D14*rawAp7_sc) : 0;
+  const arD7den_sc = _rawLife.d0 ? Math.max(_rawLife.d7||0, _rawLife.d0*EST.d7) : 0;
+  const arD7_sc  = (arD7num_sc&&arD7den_sc) ? arD7num_sc/arD7den_sc*100 : null;
+  // AR(D28) = Max(ap35, curve.D35×ap7) / Max(d28, d0×1.17)
+  const arD28num_sc = rawAp7_sc ? Math.max(rawAp35_sc, _scCurve.D35*rawAp7_sc) : 0;
+  const arD28den_sc = _rawLife.d0 ? Math.max(_rawLife.d28||0, _rawLife.d0*EST.d28) : 0;
+  const arD28_sc = (arD28num_sc&&arD28den_sc) ? arD28num_sc/arD28den_sc*100 : null;
+  // CAC at each window
+  const cacD0_sc   = rawAp7_sc   ? life60.cost/rawAp7_sc   : null;
+  const cacD7_sc   = arD7num_sc  ? life60.cost/arD7num_sc  : null;
+  const cacD28_sc  = arD28num_sc ? life60.cost/arD28num_sc : null;
+  const cacLife_sc = _rawLife.autopays ? life60.cost/_rawLife.autopays : null;
+  // Primary flag metric: use CAC(D28) if matured (ap7 > 0), else CPT(D28)
   const minTrialsCac=20;
   const cacTrials=cohort60.trials||0;
-  const cac=(matured&&ap_60>0&&cacTrials>=minTrialsCac)?cohort60.cost/ap_60:null;
-  const cacLowBase=(matured&&ap_60>0&&cacTrials>0&&cacTrials<minTrialsCac);
+  const cac=cacD28_sc;  // CAC(D28) using correct formula
+  const cacLowBase=(matured&&rawAp7_sc>0&&cacTrials>0&&cacTrials<minTrialsCac);
   // ── CPT (D28 est, last-60d window) ──
   const lifeT28=life60.d0*EST.d28;
   const cpt=lifeT28?life60.cost/lifeT28:null;
@@ -1497,6 +1569,8 @@ function creativeFlagAndFatigue(adId){
   const arW3=arWindow(ACT.matureDays+21, ACT.matureDays+14);// 3rd matured week
   return{adId,flag,label,fatiguing,fatigueDetail,recentSpend,matured,cac,cacLowBase,cacTrials,cpt,
     spend:life60.cost,trials:life60.trials,
+    arD0:arD0_sc,arD7:arD7_sc,arD28:arD28_sc,
+    cacD0:cacD0_sc,cacD7:cacD7_sc,cacD28:cacD28_sc,cacLife:cacLife_sc,
     ctrCur,ctrPrev,cptCurW,cptPrevW,cacCurW,cacPrevW,
     hookRate,holdRate,
     arW1,arW2,arW3,
