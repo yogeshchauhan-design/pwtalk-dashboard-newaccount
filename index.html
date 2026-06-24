@@ -242,6 +242,9 @@ table.act.led{font-size:10px;}
 .term-grid b{color:var(--ink);font-family:var(--m);font-size:10.5px;}
 .led-rundays .cell{font-family:var(--m);color:var(--ink3);font-size:10px;}
 .cac-actual{font-size:8.5px;color:var(--ink4);font-family:var(--m);margin-top:1px;line-height:1.2;}
+/* Highlighted metric rows (estimated/projected) */
+.mtx tbody tr.row-highlight td{background:rgba(99,86,240,0.06)!important;}
+.mtx tbody tr.row-highlight td.metric-name{color:var(--brand);font-weight:700;}
 /* ── Creative Scorecard ── */
 .cs-filter-bar{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;}
 .cs-badge{display:inline-block;font-size:9px;font-weight:800;padding:2px 8px;border-radius:5px;letter-spacing:.3px;text-transform:uppercase;white-space:nowrap;}
@@ -526,25 +529,42 @@ function fmtDate(d){const x=new Date(d);return x.getDate()+' '+['Jan','Feb','Mar
 function daysBetween(a,b){return Math.round((new Date(a)-new Date(b))/86400000);}
 function isoBack(days){const d=new Date(anchor);d.setDate(d.getDate()-days);return d.toISOString().split('T')[0];}
 const METRIC_DEFS={
+  main:[
+    {k:'cost',       label:'Cost',                          fmt:money,   calc:s=>s.cost},
+    {k:'drr',        label:'DRR',                           fmt:money,   calc:(s,ctx)=>ctx.periodDays?s.cost/ctx.periodDays:null},
+    {k:'cpm',        label:'CPM',                           fmt:money1dp,calc:s=>s.impressions?s.cost/s.impressions*1000:null,th:[T.cpm.g,T.cpm.a,0]},
+    {k:'cpc',        label:'CPC',                           fmt:money1dp,calc:s=>s.clicks?s.cost/s.clicks:null},
+    {k:'ctr',        label:'CTR',                           fmt:pct,     calc:s=>s.impressions?s.clicks/s.impressions*100:null,th:[T.ctr.g,T.ctr.a,1]},
+    {k:'c2i',        label:'Click to Install %',            fmt:pct,     calc:s=>s.clicks?s.installs/s.clicks*100:null,th:[T.c2i.g,T.c2i.a,1]},
+    {k:'cpi',        label:'CPI',                           fmt:money1dp,calc:s=>s.installs?s.cost/s.installs:null},
+    {k:'i2s',        label:'Install to Signup %',           fmt:pct,     calc:s=>s.installs?s.signups/s.installs*100:null,th:[T.i2s.g,T.i2s.a,1]},
+    {k:'cps',        label:'Cost per Signup',               fmt:money1dp,calc:s=>s.signups?s.cost/s.signups:null},
+    {k:'s2t_d0',     label:'Signup to Trial (D0) Actual',   fmt:pct,     calc:s=>s.signups&&s.d0?s.d0/s.signups*100:null,th:[T.s2t.g,T.s2t.a,1]},
+    {k:'s2t_d28a',   label:'Signup to Trial (D28) Actual',  fmt:pct,     calc:s=>s.signups&&s.d28?s.d28/s.signups*100:null,th:[T.s2t.g,T.s2t.a,1]},
+    {k:'s2t_d28e',   label:'Signup to Trial (D28) Estimated',fmt:pct,    calc:s=>s.signups&&s.d0?(s.d0*EST.d28)/s.signups*100:null,th:[T.s2t.g,T.s2t.a,1]},
+    {k:'cpt_d0',     label:'CPT (D0) Actual',               fmt:money,   calc:s=>s.d0?s.cost/s.d0:null,th:[T.cpt.g,T.cpt.a,0]},
+    {k:'cpt_d28a',   label:'CPT (D28) Actual',              fmt:money,   calc:s=>s.d28?s.cost/s.d28:null,th:[T.cpt.g,T.cpt.a,0]},
+    {k:'cpt_est_d28',label:'CPT (D28) Estimated',           fmt:money,   calc:s=>s.d0?s.cost/(s.d0*EST.d28):null,th:[T.cpt.g,T.cpt.a,0],highlight:true},
+    {k:'cpt',        label:'CPT Lifetime / Current',         fmt:money,   calc:s=>s.trials?s.cost/s.trials:null,th:[T.cpt.g,T.cpt.a,0]},
+    {k:'cac_d7',     label:'CAC (D7) Estimated',            fmt:money,
+      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const ap=Math.max(s.ap14,c.D14*s.ap7);return ap?Math.round(s.cost/ap):null;},
+      th:[T.cac.g,T.cac.a,0],early:true},
+    {k:'cac_d28',    label:'CAC (D28) Estimated',           fmt:money,
+      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const ap=Math.max(s.ap35,c.D35*s.ap7);return ap?Math.round(s.cost/ap):null;},
+      th:[T.cac.g,T.cac.a,0],early:true,highlight:true},
+    {k:'ar_life',    label:'AR Lifetime / Current',          fmt:pct,     calc:s=>s.trials&&s.autopays?s.autopays/s.trials*100:null,th:[T.apr.g,T.apr.a,1],early:true},
+    {k:'ar_d7',      label:'AR (D7)',                        fmt:pct,
+      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const num=Math.max(s.ap14,c.D14*s.ap7);const den=Math.max(s.d7||0,s.d0*EST.d7);return den?num/den*100:null;},
+      th:[T.apr.g,T.apr.a,1],early:true},
+    {k:'ar_d28',     label:'AR (D28)',                       fmt:pct,
+      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const num=Math.max(s.ap35,c.D35*s.ap7);const den=Math.max(s.d28||0,s.d0*EST.d28);return den?num/den*100:null;},
+      th:[T.apr.g,T.apr.a,1],early:true,highlight:true},
+  ],
   marketing:[
-    {k:'cost',label:'Cost',fmt:money,calc:s=>s.cost},
-    {k:'drr',label:'DRR (Daily Run Rate)',fmt:money,calc:(s,ctx)=>ctx.periodDays?s.cost/ctx.periodDays:null},
-    {k:'cost_share',label:'Cost Share %',fmt:pct,calc:(s,ctx)=>ctx.totCost?s.cost/ctx.totCost*100:null},
-    {k:'cpm',label:'CPM',fmt:money1dp,calc:s=>s.impressions?s.cost/s.impressions*1000:null,th:[T.cpm.g,T.cpm.a,0]},
+    {k:'cost_share',label:'Cost Share %',fmt:pct,calc:(s,ctx)=>ctx.totCost?s.cost/ctx.totCost*100:null,abs:true},
     {k:'impressions',label:'Impressions',fmt:num,calc:s=>s.impressions,abs:true},
     {k:'clicks',label:'Clicks',fmt:num,calc:s=>s.clicks,abs:true},
-    {k:'cpc',label:'CPC',fmt:money1dp,calc:s=>s.clicks?s.cost/s.clicks:null},
-    {k:'ctr',label:'CTR',fmt:pct,calc:s=>s.impressions?s.clicks/s.impressions*100:null,th:[T.ctr.g,T.ctr.a,1]},
-  ],
-  funnel:[
-    {k:'c2i',label:'Click→Install %',fmt:pct,calc:s=>s.clicks?s.installs/s.clicks*100:null,th:[T.c2i.g,T.c2i.a,1]},
-    {k:'installs',label:'Installs',fmt:num,calc:s=>s.installs,abs:true},
-    {k:'cpi',label:'CPI',fmt:money1dp,calc:s=>s.installs?s.cost/s.installs:null},
-    {k:'i2s',label:'Install→Signup %',fmt:pct,calc:s=>s.installs?s.signups/s.installs*100:null,th:[T.i2s.g,T.i2s.a,1]},
     {k:'signups',label:'Signups',fmt:num,calc:s=>s.signups,abs:true},
-    {k:'cps',label:'Cost/Signup',fmt:money1dp,calc:s=>s.signups?s.cost/s.signups:null},
-    {k:'s2t_d0',label:'Signup→Trial % (D0)',fmt:pct,calc:s=>s.signups?s.d0/s.signups*100:null,th:[T.s2t.g,T.s2t.a,1]},
-    {k:'s2t_d28e',label:'Signup→Trial % (D28 Est)',fmt:pct,calc:s=>s.signups?(s.d0*EST.d28)/s.signups*100:null,th:[T.s2t.g,T.s2t.a,1]},
   ],
   trials:[
     {k:'trials',label:'Trials (Lifetime)',fmt:num,calc:s=>s.trials,abs:true},
@@ -554,71 +574,28 @@ const METRIC_DEFS={
     {k:'trials_d28',label:'Trials (D28)',fmt:num,calc:s=>s.d28,abs:true},
     {k:'est_t_d28',label:'Est Trials D28 (+17%)',fmt:num,calc:s=>s.d0?Math.round(s.d0*EST.d28):null,abs:true},
   ],
-  cpt:[
-    {k:'cpt_meta',label:'CPT (Meta attribution)',fmt:money,calc:(s,ctx)=>ctx.metaCPR||null,th:[T.cpt.g,T.cpt.a,0]},
-    {k:'cpt',label:'CPT (AF Lifetime)',fmt:money,calc:s=>s.trials?s.cost/s.trials:null,th:[T.cpt.g,T.cpt.a,0]},
-    {k:'cpt_d0',label:'CPT (D0)',fmt:money,calc:s=>s.d0?s.cost/s.d0:null,th:[T.cpt.g,T.cpt.a,0]},
-    {k:'cpt_d7',label:'CPT (D7)',fmt:money,calc:s=>s.d7?s.cost/s.d7:null,th:[T.cpt.g,T.cpt.a,0]},
-    {k:'cpt_d14',label:'CPT (D14)',fmt:money,calc:s=>s.d14?s.cost/s.d14:null,th:[T.cpt.g,T.cpt.a,0]},
-    {k:'cpt_d28',label:'CPT (D28)',fmt:money,calc:s=>s.d28?s.cost/s.d28:null,th:[T.cpt.g,T.cpt.a,0]},
-    {k:'cpt_est_d28',label:'CPT Est D28',fmt:money,calc:s=>s.d0?s.cost/(s.d0*EST.d28):null,th:[T.cpt.g,T.cpt.a,0]},
-  ],
   cac:[
     {k:'autopay',label:'Autopay (actual)',fmt:num,calc:s=>s.autopays,early:true,abs:true},
     {k:'apr',label:'Autopay Rate %',fmt:pct,calc:s=>s.trials?s.autopays/s.trials*100:null,th:[T.apr.g,T.apr.a,1],early:true},
-    // ── 4 CAC rows per spec: simplify CPT(Dn)/AR(Dn) = cost/ap_at_window ──
-    {k:'cac_d0',label:'CAC (D0)',fmt:money,
-      calc:s=>s.ap7&&s.d0?Math.round(s.cost/s.ap7):null,
-      th:[T.cac.g,T.cac.a,0],early:true},
-    {k:'cac_d7',label:'CAC (D7)',fmt:money,
-      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;
-        const c=AP_CURVE[ctx&&ctx.src||'facebook'];
-        const ap=Math.max(s.ap14,c.D14*s.ap7);
-        return ap?Math.round(s.cost/ap):null;},
-      th:[T.cac.g,T.cac.a,0],early:true},
-    {k:'cac_d28',label:'CAC (D28)',fmt:money,
-      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;
-        const c=AP_CURVE[ctx&&ctx.src||'facebook'];
-        const ap=Math.max(s.ap35,c.D35*s.ap7);
-        return ap?Math.round(s.cost/ap):null;},
-      th:[T.cac.g,T.cac.a,0],early:true},
-    {k:'cac_life',label:'CAC (Lifetime)',fmt:money,
-      calc:s=>s.autopays?Math.round(s.cost/s.autopays):null,
-      th:[T.cac.g,T.cac.a,0],early:true},
+    {k:'cac_d0',label:'CAC (D0)',fmt:money,calc:s=>s.ap7&&s.d0?Math.round(s.cost/s.ap7):null,th:[T.cac.g,T.cac.a,0],early:true},
+    {k:'cac_life',label:'CAC (Lifetime)',fmt:money,calc:s=>s.autopays?Math.round(s.cost/s.autopays):null,th:[T.cac.g,T.cac.a,0],early:true},
   ],
   autopayco:[
     {k:'ap_d7',label:'Autopay (D7)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays):null,abs:true},
     {k:'ap_d14',label:'Autopay (D14 proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D14)):null,abs:true},
-    {k:'ap_d21',label:'Autopay (D21 proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D21)):null,abs:true},
     {k:'ap_d28',label:'Autopay (D28 proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D28)):null,abs:true},
     {k:'ap_d35',label:'Autopay (D35 proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D35)):null,abs:true},
-    // AR ladder — correct formula (Max of actual vs projected on both sides)
-    {k:'ar_d0',label:'AR (D0)',fmt:pct,
-      calc:s=>(s.d0&&s.ap7)?(s.ap7/s.d0*100):null,th:[T.apr.g,T.apr.a,1]},
-    {k:'ar_d7',label:'AR (D7)',fmt:pct,
-      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;
-        const c=AP_CURVE[ctx&&ctx.src||'facebook'];
-        const num=Math.max(s.ap14,c.D14*s.ap7);
-        const den=Math.max(s.d7||0,s.d0*EST.d7);
-        return den?num/den*100:null;},th:[T.apr.g,T.apr.a,1]},
-    {k:'ar_d28',label:'AR (D28)',fmt:pct,
-      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;
-        const c=AP_CURVE[ctx&&ctx.src||'facebook'];
-        const num=Math.max(s.ap35,c.D35*s.ap7);
-        const den=Math.max(s.d28||0,s.d0*EST.d28);
-        return den?num/den*100:null;},th:[T.apr.g,T.apr.a,1]},
+    {k:'ar_d0',label:'AR (D0)',fmt:pct,calc:s=>(s.d0&&s.ap7)?(s.ap7/s.d0*100):null,th:[T.apr.g,T.apr.a,1]},
   ],
   video:[
-    {k:'hook',label:'Hook Rate (3s÷Impr)',fmt:pct,calc:()=>null,vid:'hook',th:[T.hook.g,T.hook.a,1]},
-    {k:'hold',label:'Hold Rate (Thru÷3s)',fmt:pct,calc:()=>null,vid:'hold',th:[T.hold.g,T.hold.a,1]},
+    {k:'hook',label:'Hook Rate',fmt:pct,calc:()=>null,vid:'hook',th:[T.hook.g,T.hook.a,1]},
+    {k:'hold',label:'Hold Rate',fmt:pct,calc:()=>null,vid:'hold',th:[T.hold.g,T.hold.a,1]},
   ],
-};
-const GROUP_LABELS={marketing:'Marketing',funnel:'Funnel',trials:'Trial Cohorts',cpt:'CPT Cohorts',cac:'CAC & Autopay',autopayco:'Autopay Cohort Maturation (proj)',video:'Video (new acct · Jun 1–18)'};
+}
+const GROUP_LABELS={main:'Performance Metrics',marketing:'Extras',funnel:'Funnel',trials:'Trial Cohorts',cpt:'CPT Cohorts',cac:'CAC & Autopay',autopayco:'Autopay Cohort',video:'Video'};
 let rowVisible={};
 Object.keys(METRIC_DEFS).forEach(g=>METRIC_DEFS[g].forEach(m=>{rowVisible[m.k]=!m.abs;}));
-rowVisible['drr']=true;
-// autopay cohort group: show the AR ladder by default, keep raw autopay counts off (abs)
-['ar_d0','ar_d7','ar_d28','cac_d0','cac_d7','cac_d28','cac_life'].forEach(k=>rowVisible[k]=true);
+['cost_share','impressions','clicks','signups','trials','trials_d0','trials_d7','trials_d14','trials_d28','est_t_d28','autopay','apr','ap_d7','ap_d14','ap_d28','ap_d35'].forEach(k=>rowVisible[k]=false);
 function setView(v){view=v;$$('.nav-item').forEach(n=>n.classList.toggle('on',n.dataset.view===v));
   const ti={campaign:['Campaigns','Time-series matrix'],adset:['Ad Sets','Time-series matrix'],ad:['Ads','Time-series matrix'],creative:['Video Metrics','Hook & hold · Jun 1–18'],placement:['Placements','Platform split · Jun 1–18'],demo:['Demographics','Age & gender · Jun 1–18'],actions:['Actionables','Running vs Paused · Scale / Pause decisions only'],scorecard:['Creative Scorecard','Meta only · Winner / Potential Winner / Monitor / Paused · Fatigue badge']};
   $('#pgTitle').textContent=ti[v][0];$('#pgSub').textContent=ti[v][1];render();}
@@ -726,7 +703,7 @@ function mtxTableHTML(title,sums,P,extraRows,tagHtml,entitySrc){
     <th class="delta-col">Δ</th>
   </tr></thead><tbody>`;
   Object.keys(METRIC_DEFS).forEach(g=>{
-    if(g==='video')return;
+    if(g==='video'||g==='funnel'||g==='cpt')return;
     const defs=METRIC_DEFS[g].filter(m=>rowVisible[m.k]&&m.k!=='cost_share'&&!m.k.startsWith('cpt_meta'));
     if(!defs.length)return;
     if(collapsedGroups['pf-'+g])return;
@@ -744,7 +721,7 @@ function mtxTableHTML(title,sums,P,extraRows,tagHtml,entitySrc){
       if(v0!=null&&v1!=null&&v1!==0&&!isNaN(v0)&&!isNaN(v1)){
         const d=(v0-v1)/v1*100,up=d>0,hi=md.th?md.th[2]===1:true,good=hi?up:!up;
         dHTML=`<span class="${good?(up?'d-up-g':'d-dn-g'):(up?'d-up-b':'d-dn-b')}">${up?'▲':'▼'}${Math.abs(d).toFixed(0)}%</span>`;}
-      h+=`<tr><td class="metric-name">${md.label}</td>`;
+      h+=`<tr${md.highlight?' class="row-highlight"':''}><td class="metric-name">${md.label}</td>`;
       vals.forEach(v=>{const disp=md.fmt(v);h+=`<td>${disp}</td>`;});
       h+=`<td class="delta-col">${dHTML}</td></tr>`;});});
   h+=`</tbody></table></div>`;
