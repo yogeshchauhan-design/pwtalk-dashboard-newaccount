@@ -1277,14 +1277,38 @@ function vActionsInner(){
     const hasBudgetDrop=last2dAvg<=500;
     const wasMeaningfullyActive=Math.max(priorBaseline,longerBaseline)>1000;
     const isLargeDrop=priorBaseline>0&&(last2dAvg/priorBaseline)<0.4; // >60% drop
-    // "Was performing well" = good CPT and not in a pre-existing poor state
-    const wasGoodPerformer=(m.cptTill!=null&&m.cptTill<=200)||(m.matured&&m.cacWeekEst!=null&&m.cacWeekEst<=600);
+    // "Was performing well" = CAC was within target in the weeks BEFORE the drop
+    // Uses pre-computed window CAC values from entMetrics:
+    //   m.cac_w1  = CAC over most recent matured week (days 8-15)
+    //   m.cac_15  = CAC over last 15 matured days (days 8-23)
+    // Rule: BOTH W-1 CAC ≤ ₹500 AND 15d CAC ≤ ₹500 (two consistent good weeks)
+    // If either was > ₹500, the pause was a deliberate performance decision → no RCA
+    const cacW1Ok  = m.cac_w1 != null && m.cac_w1  <= ACT.cacGood;  // W-1 within target
+    const cac15Ok  = m.cac_15 != null && m.cac_15  <= ACT.cacGood;  // last 2 matured wks
+    const cac30Ok  = m.cac_30 != null && m.cac_30  <= ACT.cacGood;  // last 4 matured wks
+    // ── KEY LEARNING from campaign 120242506024310241 ──
+    // A campaign that had BAD CAC for months but happened to show near-target CAC in the
+    // final 1-2 weeks (as budget was being wound down) should NOT get an RCA flag.
+    // The near-target W-1/W-2 CAC is an artifact of smaller scale, not a real recovery.
+    // Requiring cac_30 also ≤ target ensures 4 consecutive weeks of healthy CAC before
+    // calling a budget drop "unexpected" and worth investigating.
+    const hasReliableCacData = m.cac_w1 != null && m.cac_15 != null && m.cac_30 != null;
+    // wasGoodPerformer: ALL three windows on-target = sustained healthy CAC, not a fluke
+    const wasGoodPerformer = hasReliableCacData && cacW1Ok && cac15Ok && cac30Ok;
+    const cptOk = m.cptTill != null && m.cptTill <= T.cpt.a;
+    // Immature CAC (new campaign) but CPT excellent → still flag if cut very early
+    const wasGoodByPptOnly = !hasReliableCacData && cptOk && m.cptTill != null && m.cptTill <= 100;
     if(hasBudgetDrop){
-      if(wasMeaningfullyActive&&isLargeDrop&&wasGoodPerformer){
+      if(wasMeaningfullyActive&&isLargeDrop&&(wasGoodPerformer||wasGoodByPptOnly)){
         // Good performer with sudden budget cut → surface for RCA
         m._budgetDropFlag=true;
         const pct=Math.round((1-last2dAvg/Math.max(priorBaseline,1))*100);
-        m._dropDetail=`Last 2d avg ₹${Math.round(last2dAvg)}/d vs W-1 baseline ₹${Math.round(priorBaseline)}/d (${pct}% drop) — CPT ₹${Math.round(m.cptTill||0)}`;
+        const cacCtx=wasGoodPerformer
+          ?`CAC W-1 ₹${Math.round(m.cac_w1)} · 15d ₹${Math.round(m.cac_15)} · 30d ₹${Math.round(m.cac_30)} — sustained target CAC before drop`
+          :wasGoodByPptOnly
+            ?`CPT ₹${Math.round(m.cptTill||0)} ✓ — CAC data immature, cut early`
+            :`CAC W-1 ₹${m.cac_w1?Math.round(m.cac_w1):'—'} · 15d ₹${m.cac_15?Math.round(m.cac_15):'—'} · 30d ₹${m.cac_30?Math.round(m.cac_30):'—'}`;
+        m._dropDetail=`${pct}% budget drop · Prior ₹${Math.round(priorBaseline)}/d → Now ₹${Math.round(last2dAvg)}/d · ${cacCtx}`;
         budgetDropped.push(m);
       }
       return; // exclude from main actionables (≤₹500/d recent spend = not actionable)
