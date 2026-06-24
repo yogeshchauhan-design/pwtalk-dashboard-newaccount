@@ -1434,13 +1434,24 @@ function bindTree(){
       const lines=ev.target.result.trim().split(/\r?\n/);
       const H=splitCSV(lines[0]).map(x=>x.trim().replace(/^"|"$/g,''));
       const gi=names=>{for(const n of names){const i=H.findIndex(h=>h.toLowerCase()===n.toLowerCase());if(i>=0)return i;}return-1;};
-      const iId=gi(['Ad ID','ad_id']),iImp=gi(['Impressions','impressions']),iSec3=gi(['3-Second Video Plays','3_second_video_plays','sec3']),iThru=gi(['Video Plays at 100%','thruplay','ThruPlays','video_p100_watched_actions']);
-      let n=0;
+      const iId  =gi(['Ad ID','ad_id']);
+      const iImp =gi(['Impressions','impressions']);
+      const iSec3=gi(['3-second video plays','3-Second Video Plays','3_second_video_plays','sec3']);
+      const iThru=gi(['ThruPlays','Video Plays at 100%','thruplay','video_p100_watched_actions']);
+      const iP25 =gi(['Video plays at 25%','Video Plays at 25%','video_p25_watched_actions']);
+      const iP50 =gi(['Video plays at 50%','Video Plays at 50%','video_p50_watched_actions']);
+      const iP100=gi(['Video plays at 100%','Video Plays at 100%','video_p100_watched_actions']);
+      const tmpHook={};let n=0;
       for(let i=1;i<lines.length;i++){const v=splitCSV(lines[i]);if(v.length<3)continue;
         const id=(v[iId]||'').trim().replace(/^"|"$/g,'');if(!id)continue;
-        const N=idx=>{const x=parseFloat((v[idx]||'').trim());return isNaN(x)?0:x;};
-        SC_HOOK[id]={imp:N(iImp),sec3:N(iSec3),thru:N(iThru)};n++;}
-      console.log('Hook/Hold CSV loaded:',n,'rows');
+        const N=idx=>{if(idx<0)return 0;const x=parseFloat((v[idx]||'').trim());return isNaN(x)?0:x;};
+        if(!tmpHook[id])tmpHook[id]={imp:0,sec3:0,thru:0,p25:0,p50:0,p100:0};
+        tmpHook[id].imp+=N(iImp);tmpHook[id].sec3+=N(iSec3);tmpHook[id].thru+=N(iThru);
+        tmpHook[id].p25+=N(iP25);tmpHook[id].p50+=N(iP50);tmpHook[id].p100+=N(iP100);n++;}
+      Object.keys(tmpHook).forEach(id=>{
+        if(!SC_HOOK[id])SC_HOOK[id]={imp:0,sec3:0,thru:0,p25:0,p50:0,p100:0};
+        for(const k in tmpHook[id])SC_HOOK[id][k]+=tmpHook[id][k];});
+      console.log('Hook/Hold loaded:',n,'rows,',Object.keys(tmpHook).length,'ads');
       e.target.value='';render();};rd.readAsText(f);});}
 }
 function rebuildFilters(){const fc=$('#fCampaign'),fa=$('#fAdset'),fd=$('#fAd');
@@ -1534,6 +1545,9 @@ function creativeFlagAndFatigue(adId){
   const hd=SC_HOOK[adId];
   const hookRate=hd&&hd.imp?hd.sec3/hd.imp*100:null;
   const holdRate=hd&&hd.sec3?hd.thru/hd.sec3*100:null;
+  const p25Rate=hd&&hd.imp?hd.p25/hd.imp*100:null;
+  const p50Rate=hd&&hd.imp?hd.p50/hd.imp*100:null;
+  const p100Rate=hd&&hd.imp?hd.p100/hd.imp*100:null;
   // ── (8) AR% W1/W2/W3 (matured cohorts only, D28 trials / D35 autopays projected) ──
   function arWindow(daysFrom,daysTo){
     const f=isoBack_abs(_anch,daysFrom), t=isoBack_abs(_anch,daysTo);
@@ -1551,7 +1565,7 @@ function creativeFlagAndFatigue(adId){
     arD0:arD0_sc,arD7:arD7_sc,arD28:arD28_sc,
     cacD0:cacD0_sc,cacD7:cacD7_sc,cacD28:cacD28_sc,cacLife:cacLife_sc,
     ctrCur,ctrPrev,cptCurW,cptPrevW,cacCurW,cacPrevW,
-    hookRate,holdRate,
+    hookRate,holdRate,p25Rate,p50Rate,p100Rate,
     arW1,arW2,arW3,
     d1Spend:d1.cost,d2Spend:d2.cost,d3Spend:d3.cost,
     d1Cpt:dayCpt(d1),d2Cpt:dayCpt(d2),d3Cpt:dayCpt(d3),
@@ -1662,7 +1676,7 @@ function vScorecardInner(){
       <th>CPT<br>60d</th>
       <th>CAC<br>matured</th>
       <th class="grp-div">Hook%</th>
-      <th>Hold%</th>
+      <th>Hold%</th><th>25%</th><th>50%</th><th>100%</th>
       <th class="grp-div" colspan="3">AR% (D28T÷D35AP)</th>
     </tr>
     <tr class="led-subhead">
@@ -1670,7 +1684,7 @@ function vScorecardInner(){
       <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
       <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
       <th class="grp-div">₹</th><th>₹</th><th>₹</th>
-      <th class="grp-div">%</th><th>%</th>
+      <th class="grp-div">%</th><th>%</th><th>%</th><th>%</th><th>%</th>
       <th class="grp-div">W-1</th><th>W-2</th><th>W-3</th>
     </tr></thead><tbody>`;
   rows.forEach(r=>{
@@ -1701,6 +1715,9 @@ function vScorecardInner(){
       <td>${cacDisp}</td>
       <td class="grp-div">${hookDisp}</td>
       <td>${holdDisp}</td>
+      <td>${r.p25Rate!=null?`<div class="cell">${r.p25Rate.toFixed(1)}%</div>`:'<div class="cell" style="color:var(--ink4);font-size:9px;">—</div>'}</td>
+      <td>${r.p50Rate!=null?`<div class="cell">${r.p50Rate.toFixed(1)}%</div>`:'<div class="cell" style="color:var(--ink4);font-size:9px;">—</div>'}</td>
+      <td>${r.p100Rate!=null?`<div class="cell">${r.p100Rate.toFixed(1)}%</div>`:'<div class="cell" style="color:var(--ink4);font-size:9px;">—</div>'}</td>
       <td class="grp-div">${arCell(r.arW1)}</td>
       <td>${arCell(r.arW2)}</td>
       <td>${arCell(r.arW3)}</td>
