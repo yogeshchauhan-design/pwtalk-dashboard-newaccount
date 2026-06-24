@@ -887,7 +887,14 @@ function entMetrics(entKey,entId){
   if(life.cost===0&&life.impressions===0)return null;
   const wk=weekAgg(entKey,entId);
   const recent7=recentCost(entKey,entId,ACT.pausedWindow);
-  const isPaused=recent7===0;
+  const recent3=(function(){
+    const f=isoBack(2),t=anchor;
+    return aggRangeFor(f,t,entKey,entId).cost;})();
+  const recent3Avg=recent3/3;
+  // "Effectively paused": hard zero OR trickle spend below noise floor
+  // Trickle = last 3d avg < ₹50/day AND last 7d total < ₹200
+  const isEffectiveTrickle=(recent7>0&&recent7<200&&recent3Avg<50);
+  const isPaused=(recent7===0||isEffectiveTrickle);
   // ── COHORT WINDOWS (autopay/trials are attributed to the user's cohort date) ──
   // Matured zone = cohorts on/before anchor − matureDays (had ≥8d for D8 autopay)
   const matCut=isoBack(ACT.matureDays);                 // e.g. Jun 10
@@ -1226,16 +1233,62 @@ function vActions(){
 }
 function vActionsInner(){
   let ids=[];
-  if(actGrain==='campaign')ids=Object.keys(MAP_CAMP).filter(cid=>(acct==='both'||MAP_CAMP[cid].acct===acct)&&(fCamp==='all'||cid===fCamp)).map(id=>['campaign',id]);
-  else if(actGrain==='adset')ids=Object.keys(MAP_ASET).filter(aid=>(acct==='both'||MAP_ASET[aid].acct===acct)&&(fCamp==='all'||MAP_ASET[aid].c===fCamp)&&(fAset==='all'||aid===fAset)).map(id=>['adset',id]);
-  else ids=Object.keys(MAP_AD).filter(adid=>(acct==='both'||MAP_AD[adid].acct===acct)&&(fCamp==='all'||adCamp(adid)===fCamp)&&(fAset==='all'||adAset(adid)===fAset)&&(fAd==='all'||adid===fAd)).map(id=>['ad',id]);
+  // Pre-filter: two sets
+  // _active14 = had ANY spend in last 14 days (must pass to enter entMetrics)
+  // _active7  = had spend ≥₹200 in last 7 days (used to confirm "running")
+  const _cutoff14=isoBack(13), _cutoff7=isoBack(6);
+  const _active14=new Set(), _spend7={}; // _spend7: id → last7d total spend
+  ALL_ROWS.forEach(r=>{
+    if(!inAcctFilter(r.ad_id)||!r.cost)return;
+    const _id=r.ad_id, _as=adAset(_id), _c=adCamp(_id);
+    if(r.date>=_cutoff14){
+      _active14.add(_id);
+      if(_as)_active14.add('as:'+_as);
+      if(_c)_active14.add('c:'+_c);}
+    if(r.date>=_cutoff7){
+      _spend7[_id]=(_spend7[_id]||0)+r.cost;
+      if(_as)_spend7['as:'+_as]=(_spend7['as:'+_as]||0)+r.cost;
+      if(_c)_spend7['c:'+_c]=(_spend7['c:'+_c]||0)+r.cost;}
+  });
+  // Require: in last 14 days AND last 7d spend ≥ ₹200 (filters out trickle/zombie entities)
+  const _isActiveEnough=(key)=>_active14.has(key)&&(_spend7[key]||0)>=200;
+  if(actGrain==='campaign')ids=Object.keys(MAP_CAMP).filter(cid=>(acct==='both'||MAP_CAMP[cid].acct===acct)&&(fCamp==='all'||cid===fCamp)&&_isActiveEnough('c:'+cid)).map(id=>['campaign',id]);
+  else if(actGrain==='adset')ids=Object.keys(MAP_ASET).filter(aid=>(acct==='both'||MAP_ASET[aid].acct===acct)&&(fCamp==='all'||MAP_ASET[aid].c===fCamp)&&(fAset==='all'||aid===fAset)&&_isActiveEnough('as:'+aid)).map(id=>['adset',id]);
+  else ids=Object.keys(MAP_AD).filter(adid=>(acct==='both'||MAP_AD[adid].acct===acct)&&(fCamp==='all'||adCamp(adid)===fCamp)&&(fAset==='all'||adAset(adid)===fAset)&&(fAd==='all'||adid===fAd)&&_isActiveEnough(adid)).map(id=>['ad',id]);
   // apply entity search filter (name or ID, any level)
   const q=(actEntFilter||'').trim().toLowerCase();
-  const all=[];
+  const all=[], budgetDropped=[];
   ids.forEach(([k,id])=>{
     if(q){const c=idColsLite(k,id);const hay=(c.campNm+' '+c.campId+' '+c.asNm+' '+c.asId+' '+c.adNm+' '+id).toLowerCase();if(!hay.includes(q))return;}
     const m=entMetrics(k,id);if(!m)return;
-    if(m.isPaused)return; // running only
+    if(m.isPaused)return; // truly paused (7d zero) — excluded per design
+    // ── Budget-drop gate (Issue 4) ──
+    // last2d avg daily spend
+    // ── Budget-drop detection ──
+    // last2d: average of yesterday and 2-days-ago spend
+    const _d1=aggRangeFor(isoBack(0),isoBack(0),k,id).cost;
+    const _d2=aggRangeFor(isoBack(1),isoBack(1),k,id).cost;
+    const last2dAvg=(_d1+_d2)/2;
+    // prior baseline: avg daily spend of days 8-14 (W-1, outside recent noise)
+    const priorWindow=aggRangeFor(isoBack(13),isoBack(7),k,id);
+    const priorBaseline=priorWindow.cost/7;
+    // longer baseline: days 15-28 (two-week avg for confirming sustained performance)
+    const longerBaseline=aggRangeFor(isoBack(27),isoBack(14),k,id).cost/14;
+    const hasBudgetDrop=last2dAvg<=500;
+    const wasMeaningfullyActive=Math.max(priorBaseline,longerBaseline)>1000;
+    const isLargeDrop=priorBaseline>0&&(last2dAvg/priorBaseline)<0.4; // >60% drop
+    // "Was performing well" = good CPT and not in a pre-existing poor state
+    const wasGoodPerformer=(m.cptTill!=null&&m.cptTill<=200)||(m.matured&&m.cacWeekEst!=null&&m.cacWeekEst<=600);
+    if(hasBudgetDrop){
+      if(wasMeaningfullyActive&&isLargeDrop&&wasGoodPerformer){
+        // Good performer with sudden budget cut → surface for RCA
+        m._budgetDropFlag=true;
+        const pct=Math.round((1-last2dAvg/Math.max(priorBaseline,1))*100);
+        m._dropDetail=`Last 2d avg ₹${Math.round(last2dAvg)}/d vs W-1 baseline ₹${Math.round(priorBaseline)}/d (${pct}% drop) — CPT ₹${Math.round(m.cptTill||0)}`;
+        budgetDropped.push(m);
+      }
+      return; // exclude from main actionables (≤₹500/d recent spend = not actionable)
+    }
     all.push(m);
   });
   const matCut=isoBack(ACT.matureDays);
@@ -1287,6 +1340,22 @@ function vActionsInner(){
   h+=flagTable('🔴 PAUSE','paused',byFlag.red);
   h+=flagTable('🟢 SCALE','running',byFlag.green);
   h+=flagTable('🟡 WATCH','mod',byFlag.mod);
+  // ── Budget-Drop RCA section ──
+  if(budgetDropped.length){
+    h+=`<div class="led-flag-head" style="background:#f0e6ff;color:#6356f0;border:1px solid rgba(99,86,240,.25);">
+      📉 BUDGET DROPPED — RCA Needed <span class="act-count">${budgetDropped.length}</span>
+      <span style="font-size:10px;font-weight:400;margin-left:8px;">Last 2d avg ≤₹500 AND prior baseline was strong (>₹1,500/d). Why did budget drop?</span>
+    </div>`;
+    h+=`<div class="act-tbl-wrap"><div class="act-tbl-scroll"><table class="act led">${ledgerHeader()}<tbody>`;
+    h+=ledgerRow(acctRow,true);
+    budgetDropped.forEach(m=>{
+      const row=ledgerRow(m,false);
+      // inject drop detail into the row — replace the issue cell content
+      const detail=`<span class="issue-tag it-mod">📉 ${m._dropDetail||'Budget dropped'}</span>`;
+      h+=row.replace(issueCell(m.issues), `<div class="cell issue-cell">${detail}${issueCell(m.issues).replace('<div class="cell issue-cell">','').replace('</div>','')}</div>`);
+    });
+    h+=`</tbody></table></div></div>`;
+  }
   return h;
 }
 // lightweight identity lookup for filtering (no metrics computed)
@@ -1441,7 +1510,12 @@ function vScorecardInner(){
     if(scFilter!=='all'&&r.flag!==scFilter)return;
     rows.push(r);
   });
-  rows.sort((a,b)=>SC_RANK[a.flag]-SC_RANK[b.flag]||b.spend-a.spend);
+  rows.sort((a,b)=>{
+    const rankDiff=SC_RANK[a.flag]-SC_RANK[b.flag];
+    if(rankDiff!==0)return rankDiff;
+    // Within paused: sort by cost desc; within others: sort by spend desc
+    return b.spend-a.spend;
+  });
   // counts
   const counts={winner:0,pwinner:0,monitor:0,paused:0,fatigue:0};
   rows.forEach(r=>{counts[r.flag]=(counts[r.flag]||0)+1;if(r.fatiguing)counts.fatigue++;});
