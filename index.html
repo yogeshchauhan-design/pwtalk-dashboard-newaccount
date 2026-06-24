@@ -1704,57 +1704,86 @@ $('#mapCsv').addEventListener('change',function(e){
       $('#mapStat').textContent=`${totalAds} rows · ${Object.keys(MAP_CAMP).length} camps (${Object.values(MAP_CAMP).filter(c=>c.acct==='google').length}G+${Object.values(MAP_CAMP).filter(c=>c.acct!=='google').length}M)`;
       $('#mapDot').className='us-dot ok';render();}};rd.readAsText(f);});});
 
-// ═══ UNIFIED PERFORMANCE CSV PARSER (Meta Ad-level + Google Adset-level — auto-detected) ═══
-// Detection: first column header "Adset ID" → Google; "Ad ID" → Meta
-// All metric columns (Date through sub_amt_deducted) are identical in both files
-// Meta perf upload NO LONGER wipes Google rows — both accumulate into ALL_ROWS together
+// ═══ UNIFIED PERFORMANCE CSV PARSER — v2 ═══
+// Handles: combined CSV ('Adset ID/AD ID'), separate Google CSV ('Adset ID'),
+// or separate Meta CSV ('Ad ID'). ALL THREE work via multi-select or individually.
+//
+// Source detection is per-ROW by ID length (not by column header):
+//   ID length < 15 digits  → Google adset row  (Google adset IDs are 12 digits)
+//   ID length ≥ 15 digits  → Meta ad row       (Meta IDs are 18 digits)
+//
+// This means a single combined file containing both ID types is handled correctly.
+// New columns also wired: autopay cohort D7/D14/D28/D35 from AppsFlyer.
 $('#perfCsv').addEventListener('change',function(e){
   const files=[...e.target.files];if(!files.length)return;
-  // Accumulate into a fresh array, replacing ALL_ROWS atomically at the end
   const newRows=[];let done=0;
   files.forEach(f=>{const rd=new FileReader();rd.onload=ev=>{
     const lines=ev.target.result.trim().split(/\r?\n/);
     const H=splitCSV(lines[0]).map(x=>x.trim());
-    const isGoogle=H[0]==='Adset ID'; // key detection
-    const gi=n=>H.indexOf(n);
-    const iId=0; // first column is always the ID (Adset ID or Ad ID)
+    // Column index lookup — works for any header name variant
+    const gi=name=>H.findIndex(h=>h.toLowerCase()===name.toLowerCase());
+    const gi2=names=>{for(const n of names){const i=gi(n);if(i>=0)return i;}return -1;};
+    // Fixed column positions (col 0 is always the ID regardless of header name)
+    const iId=0;
+    const iDate   =gi2(['Date','date']);
+    const iImpr   =gi2(['Impressions','impressions']);
+    const iClicks =gi2(['Clicks','clicks']);
+    const iInst   =gi2(['Installs appsflyer','Installs']);
+    const iCost   =gi2(['Cost','cost']);
+    const iSu     =gi2(['Unique users ltv days cumulative appsflyer signed_up']);
+    const iTr     =gi2(['Unique users ltv days cumulative appsflyer trial_started']);
+    const iAp     =gi2(['Unique users ltv days cumulative appsflyer sub_amt_deducted']);
+    const iD0     =gi2(['Unique users 0 days cumulative appsflyer trial_started']);
+    const iD7     =gi2(['Unique users 6 days cumulative appsflyer trial_started']);
+    const iD14    =gi2(['Unique users 13 days cumulative appsflyer trial_started']);
+    const iD28    =gi2(['Unique users 27 days cumulative appsflyer trial_started']);
+    // Autopay cohort columns (new — from combined CSV)
+    const iAp7    =gi2(['Unique users 7 days cumulative appsflyer sub_amt_deducted']);
+    const iAp14   =gi2(['Unique users 14 days cumulative appsflyer sub_amt_deducted']);
+    const iAp28   =gi2(['Unique users 28 days cumulative appsflyer sub_amt_deducted']);
+    const iAp35   =gi2(['Unique users 35 days cumulative appsflyer sub_amt_deducted']);
     for(let i=1;i<lines.length;i++){
-      const v=splitCSV(lines[i]);if(v.length<5)continue;
-      const N=idx=>{const x=parseFloat((v[idx]||'').trim());return isNaN(x)?0:x;};
+      const v=splitCSV(lines[i]);if(v.length<4)continue;
+      const N=idx=>{if(idx<0)return 0;const x=parseFloat((v[idx]||'').trim());return isNaN(x)?0:x;};
       const rawId=(v[iId]||'').trim();
+      const date=iDate>=0?normDate(v[iDate]):'';
+      if(!rawId||!date||!/^\d{4}-\d{2}-\d{2}$/.test(date))continue;
+      // ── Per-row source detection by ID length ──
+      const isGoogle=(rawId.length<15&&/^\d+$/.test(rawId));
+      const isMeta  =(rawId.length>=15&&/^\d+$/.test(rawId));
+      if(!isGoogle&&!isMeta)continue; // skip non-numeric or unexpected IDs
       const row={
-        ad_id:rawId,
-        source:isGoogle?'google':'facebook',
-        date:normDate(v[gi('Date')]),
-        impressions:N(gi('Impressions')),
-        clicks:N(gi('Clicks')),
-        installs:N(gi('Installs appsflyer')),
-        cost:N(gi('Cost')),
-        signups:N(gi('Unique users ltv days cumulative appsflyer signed_up')),
-        trials:N(gi('Unique users ltv days cumulative appsflyer trial_started')),
-        autopays:N(gi('Unique users ltv days cumulative appsflyer sub_amt_deducted')),
-        d0:N(gi('Unique users 0 days cumulative appsflyer trial_started')),
-        d7:N(gi('Unique users 6 days cumulative appsflyer trial_started')),
-        d14:N(gi('Unique users 13 days cumulative appsflyer trial_started')),
-        d28:N(gi('Unique users 27 days cumulative appsflyer trial_started'))};
-      // Validation: ID must be non-empty numeric-ish string, date must be valid
-      if(rawId&&rawId.length>=4&&/^\d{4}-\d{2}-\d{2}$/.test(row.date)){
-        // For Google rows: ensure the synthetic leaf exists (in case mapping not uploaded yet — create stub)
-        if(isGoogle&&!MAP_AD[rawId]){
+        ad_id:  rawId,
+        source: isGoogle?'google':'facebook',
+        date,
+        impressions:N(iImpr), clicks:N(iClicks), installs:N(iInst),
+        cost:   N(iCost),
+        signups:N(iSu),
+        trials: N(iTr),
+        autopays:N(iAp),
+        d0:N(iD0), d7:N(iD7), d14:N(iD14), d28:N(iD28),
+        // autopay cohort columns (D7/D14/D28/D35 actual collected)
+        ap7:N(iAp7), ap14:N(iAp14), ap28:N(iAp28), ap35:N(iAp35),
+      };
+      if(isGoogle){
+        // Ensure synthetic MAP_AD leaf exists for this adset
+        if(!MAP_AD[rawId]){
           MAP_AD[rawId]={s:rawId,as:rawId,c:'',acct:'google',source:'google'};
+        } else {
+          MAP_AD[rawId].source='google';
         }
-        // Tag source onto existing leaf
-        if(MAP_AD[rawId])MAP_AD[rawId].source=isGoogle?'google':'facebook';
-        newRows.push(row);}}
+      }
+      newRows.push(row);}
     done++;
     if(done===files.length){
-      ALL_ROWS=newRows; // atomic replace — no partial-wipe race condition
+      ALL_ROWS=newRows;AGG_DIRTY=true;
       const ds=ALL_ROWS.map(r=>r.date).filter(Boolean).sort();
       if(ds.length){anchor=ds[ds.length-1];dataMaxDate=ds[ds.length-1];$('#anchor').value=anchor;}
       const gRows=ALL_ROWS.filter(r=>r.source==='google').length;
       const mRows=ALL_ROWS.length-gRows;
-      const mNew=ALL_ROWS.filter(r=>r.source!=='google'&&classifyAcct(r.ad_id)==='new').length;
-      $('#perfStat').textContent=`${ALL_ROWS.length.toLocaleString()} rows · Meta: ${mRows.toLocaleString()} (${mNew.toLocaleString()} new) · Google: ${gRows.toLocaleString()} · ${ds[0]||'?'} → ${ds[ds.length-1]||'?'}`;
+      const mNew=ALL_ROWS.filter(r=>r.source==='facebook'&&classifyAcct(r.ad_id)==='new').length;
+      const mOld=mRows-mNew;
+      $('#perfStat').textContent=`${ALL_ROWS.length.toLocaleString()} rows · Meta: ${mRows.toLocaleString()} (${mNew.toLocaleString()} new / ${mOld.toLocaleString()} old) · Google: ${gRows.toLocaleString()} · ${ds[0]||'?'} → ${ds[ds.length-1]||'?'}`;
       $('#perfDot').className='us-dot ok';
       $('#updated').textContent='Updated: '+new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
       e.target.value='';render();}};rd.readAsText(f);});});
