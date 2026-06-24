@@ -567,41 +567,41 @@ const METRIC_DEFS={
     {k:'autopay',label:'Autopay (actual)',fmt:num,calc:s=>s.autopays,early:true,abs:true},
     {k:'apr',label:'Autopay Rate %',fmt:pct,calc:s=>s.trials?s.autopays/s.trials*100:null,th:[T.apr.g,T.apr.a,1],early:true},
     // ── 4 CAC rows per spec: simplify CPT(Dn)/AR(Dn) = cost/ap_at_window ──
-    {k:'cac_d0',label:'CAC(D0) = cost÷AP(D7)',fmt:money,
+    {k:'cac_d0',label:'CAC (D0)',fmt:money,
       calc:s=>s.ap7&&s.d0?Math.round(s.cost/s.ap7):null,
       th:[T.cac.g,T.cac.a,0],early:true},
-    {k:'cac_d7',label:'CAC(D7) = cost÷Max(AP14,curve×AP7)',fmt:money,
+    {k:'cac_d7',label:'CAC (D7)',fmt:money,
       calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;
         const c=AP_CURVE[ctx&&ctx.src||'facebook'];
         const ap=Math.max(s.ap14,c.D14*s.ap7);
         return ap?Math.round(s.cost/ap):null;},
       th:[T.cac.g,T.cac.a,0],early:true},
-    {k:'cac_d28',label:'CAC(D28) = cost÷Max(AP35,curve×AP7)',fmt:money,
+    {k:'cac_d28',label:'CAC (D28)',fmt:money,
       calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;
         const c=AP_CURVE[ctx&&ctx.src||'facebook'];
         const ap=Math.max(s.ap35,c.D35*s.ap7);
         return ap?Math.round(s.cost/ap):null;},
       th:[T.cac.g,T.cac.a,0],early:true},
-    {k:'cac_life',label:'CAC(Lifetime) = cost÷AP(collected)',fmt:money,
+    {k:'cac_life',label:'CAC (Lifetime)',fmt:money,
       calc:s=>s.autopays?Math.round(s.cost/s.autopays):null,
       th:[T.cac.g,T.cac.a,0],early:true},
   ],
   autopayco:[
-    {k:'ap_d7',label:'Autopay D7 (actual)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays):null,abs:true},
-    {k:'ap_d14',label:'Autopay D14 (proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D14)):null,abs:true},
-    {k:'ap_d21',label:'Autopay D21 (proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D21)):null,abs:true},
-    {k:'ap_d28',label:'Autopay D28 (proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D28)):null,abs:true},
-    {k:'ap_d35',label:'Autopay D35 (proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D35)):null,abs:true},
+    {k:'ap_d7',label:'Autopay (D7)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays):null,abs:true},
+    {k:'ap_d14',label:'Autopay (D14 proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D14)):null,abs:true},
+    {k:'ap_d21',label:'Autopay (D21 proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D21)):null,abs:true},
+    {k:'ap_d28',label:'Autopay (D28 proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D28)):null,abs:true},
+    {k:'ap_d35',label:'Autopay (D35 proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D35)):null,abs:true},
     // AR ladder — correct formula (Max of actual vs projected on both sides)
-    {k:'ar_d0',label:'AR(D0) = ap7÷d0',fmt:pct,
+    {k:'ar_d0',label:'AR (D0)',fmt:pct,
       calc:s=>(s.d0&&s.ap7)?(s.ap7/s.d0*100):null,th:[T.apr.g,T.apr.a,1]},
-    {k:'ar_d7',label:'AR(D7) = Max(ap14,curve×ap7)÷Max(d7,d0×1.105)',fmt:pct,
+    {k:'ar_d7',label:'AR (D7)',fmt:pct,
       calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;
         const c=AP_CURVE[ctx&&ctx.src||'facebook'];
         const num=Math.max(s.ap14,c.D14*s.ap7);
         const den=Math.max(s.d7||0,s.d0*EST.d7);
         return den?num/den*100:null;},th:[T.apr.g,T.apr.a,1]},
-    {k:'ar_d28',label:'AR(D28) = Max(ap35,curve×ap7)÷Max(d28,d0×1.17)',fmt:pct,
+    {k:'ar_d28',label:'AR (D28)',fmt:pct,
       calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;
         const c=AP_CURVE[ctx&&ctx.src||'facebook'];
         const num=Math.max(s.ap35,c.D35*s.ap7);
@@ -689,7 +689,7 @@ function buildAggCache(){
 function aggFast(from,to,entKey,entId){
   if(AGG_DIRTY||!AGG_CACHE.byDate)buildAggCache();
   const bucket=entKey==='campaign'?'camp':entKey==='adset'?'as':'ad';
-  const s={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0};
+  const s={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0,ap7:0,ap14:0,ap35:0};
   const D=AGG_CACHE.byDate;
   Object.keys(D).forEach(dt=>{
     if(dt<from||dt>to)return;
@@ -701,7 +701,7 @@ function aggFast(from,to,entKey,entId){
 function aggPortfolioFast(from,to,srcFilter){
   // srcFilter: 'all'|'google'|'meta'
   if(AGG_DIRTY||!AGG_CACHE.byDate)buildAggCache();
-  const s={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0};
+  const s={impressions:0,clicks:0,installs:0,cost:0,signups:0,trials:0,autopays:0,d0:0,d7:0,d14:0,d28:0,ap7:0,ap14:0,ap35:0};
   ALL_ROWS.forEach(r=>{
     if(r.date<from||r.date>to)return;
     if(!inAcctFilter(r.ad_id))return;
