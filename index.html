@@ -471,6 +471,7 @@ let ALL_ROWS=[];
 let view='campaign',gran='dod',numCols=7,anchor='2026-06-18',search='',fCamp='all',fAset='all',fAd='all',acct='new';
 let dataMaxDate='2026-06-18'; // latest date in loaded data; Actionables always anchors here regardless of date picker
 let openEnts={},collapsedGroups={},treeOpen={},actOpen={},actFilter='action',actShowActioned=false,actGrain='adset',actEntFilter='';
+let momOverrides={}; // keyed by 'YYYY-MM' → {from:'YYYY-MM-DD',to:'YYYY-MM-DD'}
 let scFilter='all',scDateFrom='',scDateTo='',scSearch='',scCamp='all',scAset='all',scAd='all';
 const SC_DEFAULT_CAMPS=['120248957033330732','120229176884230241'];
 let scPinnedCamps=new Set(SC_DEFAULT_CAMPS);
@@ -487,10 +488,30 @@ function passEntity(r){if(!inAcctFilter(r.ad_id))return false;const c=adCamp(r.a
   if(search){const q=search.toLowerCase();const hay=[r.ad_id,c,a,MAP_AD[r.ad_id]?.s,MAP_ASET[a]?.s,MAP_CAMP[c]?.s].join(' ').toLowerCase();if(!hay.includes(q))return false;}return true;}
 function periods(){const out=[];const a=new Date(anchor);
   for(let i=0;i<numCols;i++){let from,to,label;
-    if(gran==='dod'){const d=new Date(a);d.setDate(d.getDate()-i);from=to=d.toISOString().split('T')[0];label='D'+(i===0?'0':'-'+i);}
-    else if(gran==='wow'){const e=new Date(a);e.setDate(e.getDate()-i*7);const s=new Date(e);s.setDate(s.getDate()-6);from=s.toISOString().split('T')[0];to=e.toISOString().split('T')[0];label='W'+(i===0?'0':'-'+i);}
-    else{const e=new Date(a);e.setMonth(e.getMonth()-i);const s=new Date(e);s.setDate(s.getDate()-29);from=s.toISOString().split('T')[0];to=e.toISOString().split('T')[0];label='M'+(i===0?'0':'-'+i);}
-    out.push({label,from,to});}return out;}
+    if(gran==='dod'){
+      const d=new Date(a);d.setDate(d.getDate()-i);
+      from=to=d.toISOString().split('T')[0];label='D'+(i===0?'0':'-'+i);
+      out.push({label,from,to});
+    } else if(gran==='wow'){
+      const e=new Date(a);e.setDate(e.getDate()-i*7);
+      const s=new Date(e);s.setDate(s.getDate()-6);
+      from=s.toISOString().split('T')[0];to=e.toISOString().split('T')[0];
+      label='W'+(i===0?'0':'-'+i);
+      out.push({label,from,to});
+    } else {
+      const yr0=a.getFullYear(),mo0=a.getMonth();
+      let yr=yr0,mo=mo0-i;
+      while(mo<0){mo+=12;yr--;}
+      const monthKey=yr+'-'+String(mo+1).padStart(2,'0');
+      const lastDay=new Date(yr,mo+1,0).getDate();
+      const calFrom=yr+'-'+String(mo+1).padStart(2,'0')+'-01';
+      const calTo=yr+'-'+String(mo+1).padStart(2,'0')+'-'+String(lastDay).padStart(2,'0');
+      const ov=momOverrides[monthKey]||{};
+      from=ov.from||calFrom;to=ov.to||calTo;
+      const mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      label=mn[mo]+(yr!==yr0?' '+yr:'');
+      out.push({label,from,to,monthKey,calFrom,calTo,hasOverride:!!(ov.from||ov.to)});
+    }}return out;}
 function aggRangeFor(from,to,entKey,entId){
   const rs=ALL_ROWS.filter(r=>{if(r.date<from||r.date>to)return false;if(!inAcctFilter(r.ad_id))return false;
     if(entKey==='campaign')return adCamp(r.ad_id)===entId;if(entKey==='adset')return adAset(r.ad_id)===entId;if(entKey==='ad')return r.ad_id===entId;return false;});
@@ -612,6 +633,33 @@ function updateAcctUI(){
   badge.className='acct-badge '+(acct==='new'?'badge-new':acct==='old'?'badge-old':'badge-both');
   $('#footAcct').textContent=acct==='new'?'New: PWM35 · 1604251083884176':acct==='old'?'Old account (AppsFlyer only)':'Both accounts combined';
   ['creative','placement','demo'].forEach(v=>{const n=document.querySelector(`.nav-item[data-view="${v}"]`);if(n){n.style.opacity=acct==='old'?'0.4':'1';n.style.pointerEvents=acct==='old'?'none':'auto';}});}
+function renderMomOverrideUI(){
+  const row=$('#momOverrideRow'),cols=$('#momOverrideCols');
+  if(!row||!cols)return;
+  if(gran!=='mom'){row.style.display='none';return;}
+  row.style.display='';
+  const P=periods();
+  cols.innerHTML=P.map(p=>{
+    const mk=p.monthKey||'';if(!mk)return '';
+    return `<div style="background:var(--panel);border:1px solid ${p.hasOverride?'var(--brand)':'var(--line2)'};border-radius:8px;padding:8px 10px;min-width:200px;">
+      <div style="font-size:10.5px;font-weight:700;color:var(--ink2);margin-bottom:5px;">${p.label}${p.hasOverride?' <span style="color:var(--brand);font-size:9px;">custom</span>':''}</div>
+      <div style="display:flex;gap:5px;align-items:center;font-size:10px;flex-wrap:wrap;">
+        <span style="color:var(--ink3);">From</span>
+        <input type="date" style="font-family:var(--m);font-size:10px;padding:3px 6px;border:1px solid var(--line2);border-radius:5px;background:var(--panel2);"
+          value="${p.from}" min="${p.calFrom}" max="${p.calTo}"
+          data-mk="${mk}" data-field="from"
+          oninput="momOverrides[this.dataset.mk]={...(momOverrides[this.dataset.mk]||{}),from:this.value||undefined};if(!this.value)delete (momOverrides[this.dataset.mk]||{}).from;render();">
+        <span style="color:var(--ink3);">To</span>
+        <input type="date" style="font-family:var(--m);font-size:10px;padding:3px 6px;border:1px solid var(--line2);border-radius:5px;background:var(--panel2);"
+          value="${p.to}" min="${p.calFrom}" max="${p.calTo}"
+          data-mk="${mk}" data-field="to"
+          oninput="momOverrides[this.dataset.mk]={...(momOverrides[this.dataset.mk]||{}),to:this.value||undefined};render();">
+        ${p.hasOverride?`<button onclick="delete momOverrides['${mk}'];render();" style="font-size:9px;padding:2px 7px;border:1px solid var(--line2);border-radius:4px;cursor:pointer;background:var(--panel2);color:var(--bad);">Reset</button>`:''}
+      </div>
+      <div style="font-size:9px;color:var(--ink4);margin-top:4px;">Calendar: ${p.calFrom} – ${p.calTo}</div>
+    </div>`;
+  }).join('');
+}
 let _renderPending=false;
 function render(){
   if(_renderPending)return; // debounce — coalesce rapid fire calls (filter dropdowns)
@@ -620,6 +668,7 @@ function render(){
   updateAcctUI();rebuildFilters();
   requestAnimationFrame(()=>{_renderPending=false;_renderInner();});}
 function _renderInner(){
+  renderMomOverrideUI();
   const c=$('#views');
   if(ALL_ROWS.length===0&&(view==='campaign'||view==='adset'||view==='ad'||view==='actions')){
     c.innerHTML='<div class="empty-state"><div class="empty-ic">📂</div><div style="font-size:13px;font-weight:600;margin-bottom:6px;">No performance data loaded</div><div style="font-size:11px;color:var(--ink4);">1. Upload Mapping CSV(s) via 🗂 — supports Meta and Google in one multi-select<br>2. Upload Performance CSV(s) via 📂 — Meta ad-level and Google adset-level auto-detected<br>3. Google data: select <b>Google (UAC)</b> or <b>Both</b> in account dropdown</div></div>';return;}
@@ -784,7 +833,9 @@ function emptyMetricRow(P){
 function vMatrix(level){
   if(AGG_DIRTY)buildAggCache();
   const P=periods();
-  const banner=`<div class="banner ${gran!=='dod'?'warn':''}">📅 <b>${gran.toUpperCase()}</b> · ${numCols} periods · anchor ${anchor}.</div>`;
+  const _P0=periods();
+  const _momNote=gran==='mom'?` · ${Object.keys(momOverrides).length>0?Object.keys(momOverrides).length+' custom range(s)':'Calendar months'}`:' · anchor '+anchor;
+  const banner=`<div class="banner ${gran!=='dod'?'warn':''}">📅 <b>${gran.toUpperCase()}</b> · ${numCols} ${gran==='mom'?'months':'periods'}${_momNote}.</div>`;
   let h=banner;
 
   if(level==='campaign'){
