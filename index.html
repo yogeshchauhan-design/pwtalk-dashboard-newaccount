@@ -430,6 +430,7 @@ const DEMO_GENDER={
   ],
 };
 const T={cpt:{g:100,a:150},cac:{g:450,a:500},ctr:{g:.25,a:.15},cpm:{g:20,a:30},c2i:{g:30,a:20},i2s:{g:70,a:50},s2t:{g:20,a:10},apr:{g:28,a:20},hook:{g:15,a:8},hold:{g:25,a:15}};
+function floorMax(a,b){return Math.max(Math.floor(a||0),Math.floor(b||0));}
 const EST={d7:1.105,d14:1.14,d28:1.17};
 // ═══ AUTOPAY COHORT CURVES (#2) — addition over D7 base, by source ═══
 const AP_CURVE={
@@ -450,7 +451,8 @@ const ACT={
   minAutopaysRevive:5,  // min autopays before a paused entity can be a REVIVE callout
   minTrialsScale:10,    // min trials for an immature SCALE verdict to be credible
   trailWindow:30,       // trailing window used for revive/maturity assessment
-  minTrialsForAR:50,    // min ACTUAL trials before AR%/CAC is trusted to drive a decision
+  minTrialsForAR:50,    // min ACTUAL trials before AR%/CAC is trusted to FULLY drive a decision
+  minTrialsForARLow:15, // min ACTUAL trials before CAC can still VETO a false CPT-only PAUSE
   benchMargin:15,       // #3 entity must be >this% worse than account CPT/CAC to flag Pause
   drrMoveThreshold:15,  // #5 a ±this% DRR shift counts as 'already actioned' suppression
   funnelMinDev:15,      // #4 a funnel link must deviate ≥this% (vs acct or own W-1) to be named a driver
@@ -578,17 +580,17 @@ const METRIC_DEFS={
     {k:'cpt_est_d28',label:'CPT (D28) Estimated',           fmt:money,   calc:s=>s.d0?s.cost/(s.d0*EST.d28):null,th:[T.cpt.g,T.cpt.a,0],highlight:true},
     {k:'cpt',        label:'CPT Lifetime / Current',         fmt:money,   calc:s=>s.trials?s.cost/s.trials:null,th:[T.cpt.g,T.cpt.a,0]},
     {k:'cac_d7',     label:'CAC (D7) Estimated',            fmt:money,
-      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const ap=Math.max(s.ap14,c.D14*s.ap7);return ap?Math.round(s.cost/ap):null;},
+      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const ap=floorMax(s.ap14,c.D14*s.ap7);return ap?Math.round(s.cost/ap):null;},
       th:[T.cac.g,T.cac.a,0],early:true},
     {k:'cac_d28',    label:'CAC (D28) Estimated',           fmt:money,
-      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const ap=Math.max(s.ap35,c.D35*s.ap7);return ap?Math.round(s.cost/ap):null;},
+      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const ap=floorMax(s.ap35,c.D35*s.ap7);return ap?Math.round(s.cost/ap):null;},
       th:[T.cac.g,T.cac.a,0],early:true,highlight:true},
     {k:'ar_life',    label:'AR Lifetime / Current',          fmt:pct,     calc:s=>s.trials&&s.autopays?s.autopays/s.trials*100:null,th:[T.apr.g,T.apr.a,1],early:true},
     {k:'ar_d7',      label:'AR (D7)',                        fmt:pct,
-      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const num=Math.max(s.ap14,c.D14*s.ap7);const den=Math.max(s.d7||0,s.d0*EST.d7);return den?num/den*100:null;},
+      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const num=floorMax(s.ap14,c.D14*s.ap7);const den=floorMax(s.d7||0,s.d0*EST.d7);return den?num/den*100:null;},
       th:[T.apr.g,T.apr.a,1],early:true},
     {k:'ar_d28',     label:'AR (D28)',                       fmt:pct,
-      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const num=Math.max(s.ap35,c.D35*s.ap7);const den=Math.max(s.d28||0,s.d0*EST.d28);return den?num/den*100:null;},
+      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const num=floorMax(s.ap35,c.D35*s.ap7);const den=floorMax(s.d28||0,s.d0*EST.d28);return den?num/den*100:null;},
       th:[T.apr.g,T.apr.a,1],early:true,highlight:true},
   ],
   marketing:[
@@ -612,10 +614,12 @@ const METRIC_DEFS={
     {k:'cac_life',label:'CAC (Lifetime)',fmt:money,calc:s=>s.autopays?Math.round(s.cost/s.autopays):null,th:[T.cac.g,T.cac.a,0],early:true},
   ],
   autopayco:[
-    {k:'ap_d7',label:'Autopay (D7)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays):null,abs:true},
-    {k:'ap_d14',label:'Autopay (D14 proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D14)):null,abs:true},
-    {k:'ap_d28',label:'Autopay (D28 proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D28)):null,abs:true},
-    {k:'ap_d35',label:'Autopay (D35 proj)',fmt:num,calc:s=>s.autopays?Math.round(s.autopays*(AP_CURVE.facebook.D35)):null,abs:true},
+    // Use the REAL D7/D14/D28/D35 autopay columns from the cohort CSV — these
+    // are actual collected counts, not approximations from the lifetime column.
+    {k:'ap_d7', label:'Autopay (D7 actual)', fmt:num,calc:s=>s.ap7!=null?Math.round(s.ap7):null,abs:true},
+    {k:'ap_d14',label:'Autopay (D14 actual)',fmt:num,calc:s=>s.ap14!=null?Math.round(s.ap14):null,abs:true},
+    {k:'ap_d28',label:'Autopay (D28 actual)',fmt:num,calc:s=>s.ap28!=null?Math.round(s.ap28):null,abs:true},
+    {k:'ap_d35',label:'Autopay (D35 actual)',fmt:num,calc:s=>s.ap35!=null?Math.round(s.ap35):null,abs:true},
     {k:'ar_d0',label:'AR (D0)',fmt:pct,calc:s=>(s.d0&&s.ap7)?(s.ap7/s.d0*100):null,th:[T.apr.g,T.apr.a,1]},
   ],
   video:[
@@ -998,12 +1002,12 @@ function entMetrics(entKey,entId){
   const arD0 = cohortAll.d0 ? rawAp7/cohortAll.d0*100 : null;
   // AR(D7) = Max(ap14_actual, 1.30×ap7) / Max(d7_actual, d0×1.105)
   const _emCurve=AP_CURVE[srcOf(entId)||'facebook'];
-  const arD7num = Math.max(rawAp14, _emCurve.D14*rawAp7);
-  const arD7den = Math.max(cohortAll.d7||0, cohortAll.d0*EST.d7||0);
+  const arD7num = floorMax(rawAp14, _emCurve.D14*rawAp7);
+  const arD7den = floorMax(cohortAll.d7||0, cohortAll.d0*EST.d7||0);
   const arD7 = arD7den ? arD7num/arD7den*100 : null;
-  // AR(D28) = Max(ap35_actual, curve.D35×ap7) / Max(d28_actual, d0×1.17)
-  const arD28num = Math.max(rawAp35, _emCurve.D35*rawAp7);
-  const arD28den = Math.max(cohortAll.d28||0, cohortAll.d0*EST.d28||0);
+  // AR(D28) = floorMax(ap35_actual, curve.D35×ap7) / floorMax(d28_actual, d0×1.17)
+  const arD28num = floorMax(rawAp35, _emCurve.D35*rawAp7);
+  const arD28den = floorMax(cohortAll.d28||0, cohortAll.d0*EST.d28||0);
   const arD28 = arD28den ? arD28num/arD28den*100 : null;
   // CAC at each window = cost / ap_at_window (CPT/AR cancels)
   const cacD0  = rawAp7   ? cohortAll.cost/rawAp7   : null;
@@ -1015,7 +1019,8 @@ function entMetrics(entKey,entId){
   let headlineAR=null,headlineARLabel='—';
   ['D28','D7','D0'].forEach(l=>{if(headlineAR===null&&arLadder[l]!=null){headlineAR=arLadder[l];headlineARLabel='AR('+l+')';}});
   const arBase = decCohort.trials;
-  const arTrust = arBase>=ACT.minTrialsForAR;
+  const arTrust = arBase>=ACT.minTrialsForAR;        // full trust — CAC fully drives SCALE/PAUSE
+  const arTrustLow = arBase>=ACT.minTrialsForARLow;  // thin trust — CAC can veto a false PAUSE, can't drive SCALE
   const matured = decCohort.cost>0 && ap_decCohort>0 && maturedDaysOfHistory>=7;
   // ── CPT (D28-based) ──
   const lifeT28=life.d0*EST.d28, wkT28=wk.d0*EST.d28;
@@ -1054,6 +1059,26 @@ function entMetrics(entKey,entId){
   const cac_w1=(function(){const c=aggRangeFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);return ap?c.cost/ap:null;})();
   const cac_15=(function(){const c=aggRangeFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);return ap?c.cost/ap:null;})();
   const cac_30=(function(){const c=aggRangeFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);return ap?c.cost/ap:null;})();
+  // ── AR(D28) Projected — windowed, excluding last matureDays(8) days, same pattern as cac_w1/15/30 ──
+  // Formula matches the main AR(D28) calc: floorMax(ap35,curve.D35×ap7) / floorMax(d28,d0×EST.d28)
+  const _arCurve=AP_CURVE[srcOf(entId)||'facebook'];
+  function arD28Window(daysBack){
+    const w=aggRangeFor(isoBack(ACT.matureDays+daysBack),matCut,entKey,entId);
+    if(!w.cost||!w.d0)return null;
+    const num=floorMax(w.ap35,_arCurve.D35*w.ap7);
+    const den=floorMax(w.d28||0,w.d0*EST.d28);
+    return den?num/den*100:null;
+  }
+  const arD28_w1  = arD28Window(7);   // W-1: 8-15d matured
+  const arD28_w2  = (function(){
+    const w=aggRangeFor(isoBack(ACT.matureDays+14),isoBack(ACT.matureDays+7),entKey,entId);
+    if(!w.cost||!w.d0)return null;
+    const num=floorMax(w.ap35,_arCurve.D35*w.ap7);
+    const den=floorMax(w.d28||0,w.d0*EST.d28);
+    return den?num/den*100:null;
+  })();                                // W-2: 15-22d matured
+  const arD28_15d = arD28Window(15);  // Last 15 matured days: 8-23d
+  const arD28_30d = arD28Window(30);  // Last 30 matured days: 8-38d
   // ACTUAL (un-projected) CAC = window spend ÷ raw autopays in window (no curve)
   const cacActOf=(daysBack)=>{const c=aggRangeFor(isoBack(ACT.matureDays+daysBack),matCut,entKey,entId);return c.autopays?c.cost/c.autopays:null;};
   const cacAct_w1=cacActOf(7), cacAct_15=cacActOf(15), cacAct_30=cacActOf(30);
@@ -1130,24 +1155,51 @@ function entMetrics(entKey,entId){
   // ── DECISION ──
   let flag='mod',verdict='watch',issues=[];
   const cptΔ=(cptTill!=null&&cptWeek!=null&&cptTill>0)?(cptWeek-cptTill)/cptTill*100:null;
+  // CPT trend check — own-entity L7 vs trailing W-1/W-2 baseline (#2: CPT-trend-aware Monitor)
+  // Used ONLY in the CPT-fallback branch when CAC isn't trustworthy enough to decide outright.
+  const cptBaseline = (cptW1!=null&&cptW2!=null) ? (cptW1+cptW2)/2 : (cptW1!=null?cptW1:cptW2);
+  const cptImprovePct = (cptL7!=null&&cptBaseline!=null&&cptBaseline>0) ? (cptBaseline-cptL7)/cptBaseline*100 : null;
+  const cptSharplyImproved = cptImprovePct!=null && cptImprovePct>=30; // ≥30% drop vs trailing baseline
   if(isPaused){
     if(matured&&arTrust&&cacMatured!=null&&cacMatured<=ACT.cacGood&&ap_decCohort>=ACT.minAutopaysRevive){
       flag='green';verdict='scale';issues.push(['green','Revive — matured CAC ₹'+Math.round(cacMatured)+' ('+decWindowLabel+', '+arBase+' trials)']);
     } else { flag='mod';verdict='watch';issues.push(['mod','Paused — '+(arTrust?'CAC ₹'+(cacMatured?Math.round(cacMatured):'—')+' not scale-worthy':'thin base ('+arBase+' matured trials)')]); }
   } else if(matured&&arTrust){
-    if(cacMatured!=null&&cacMatured<=ACT.cacGood){flag='green';verdict='scale';issues.push(['green','Matured CAC ₹'+Math.round(cacMatured)+' ≤ ₹'+ACT.cacGood+' ('+decWindowLabel+')']);}
+    // ── Full CAC trust (≥50 matured trials) — CAC fully drives the verdict ──
+    if(cacMatured!=null&&cacMatured<=ACT.cacGood){flag='green';verdict='scale';issues.push(['green','Matured CAC ₹'+Math.round(cacMatured)+' ≤ ₹'+ACT.cacGood+' ('+decWindowLabel+', '+arBase+' trials)']);}
     else if(cacMatured!=null&&cacMatured>ACT.cacGood*1.3&&(cacVsAcct==null||cacVsAcct>ACT.benchMargin)){
-      // #3: only Pause if also worse than account by margin (or no account baseline)
-      flag='red';verdict='pause';issues.push(['red','CAC ₹'+Math.round(cacMatured)+' > target'+(cacVsAcct!=null?' & '+cacVsAcct.toFixed(0)+'% over acct':'')]);}
-    else if(cacMatured!=null&&cacMatured>ACT.cacGood*1.3){flag='mod';verdict='watch';issues.push(['mod','CAC high but near account avg — give time']);}
-    else {flag='mod';verdict='watch';issues.push(['mod','CAC near target — hold']);}
+      flag='red';verdict='pause';issues.push(['red','CAC ₹'+Math.round(cacMatured)+' > target ('+decWindowLabel+', '+arBase+' trials)'+(cacVsAcct!=null?' & '+cacVsAcct.toFixed(0)+'% over acct':'')]);}
+    else if(cacMatured!=null&&cacMatured>ACT.cacGood*1.3){flag='mod';verdict='watch';issues.push(['mod','CAC ₹'+Math.round(cacMatured)+' high but near account avg ('+decWindowLabel+') — give time']);}
+    else {flag='mod';verdict='watch';issues.push(['mod','CAC ₹'+(cacMatured?Math.round(cacMatured):'—')+' near target ('+decWindowLabel+') — hold']);}
   } else {
-    if(cptTill!=null&&cptTill<ACT.cptScale&&life.trials>=ACT.minTrialsScale){flag='green';verdict='scale';issues.push(['green','CPT ₹'+Math.round(cptTill)+' < ₹'+ACT.cptScale+(arTrust?'':' (CAC base building)')]);}
-    else if(cptTill!=null&&cptTill>T.cpt.a&&life.cost>200&&life.trials>=3&&(cptVsAcct==null||cptVsAcct>ACT.benchMargin)){
-      flag='red';verdict='pause';issues.push(['red','CPT ₹'+Math.round(cptTill)+' > ₹'+T.cpt.a+(cptVsAcct!=null?' & '+cptVsAcct.toFixed(0)+'% over acct':'')]);}
-    else if(cptTill!=null&&cptTill>T.cpt.a&&life.cost>200){flag='mod';verdict='watch';issues.push(['mod','CPT high but tracking account — give time']);}
-    else if(life.cost>300&&life.trials===0){flag='red';verdict='pause';issues.push(['red','₹'+Math.round(life.cost)+' spent, 0 trials']);}
-    else {flag='mod';verdict='watch';issues.push(['mod','Building signal — '+arBase+' matured trials']);}
+    // ── CAC not fully trusted (<50 matured trials) — CPT-led branch ──
+    // #1 FIX: if there's at least a THIN CAC read (≥15 trials) and it's clearly good,
+    // let it VETO a CPT-only PAUSE — don't punish a structurally-expensive-but-converting
+    // entity just because the trial sample hasn't hit the full-trust bar yet.
+    const cacVetoesGoodPause = arTrustLow && cacMatured!=null && cacMatured<=ACT.cacGood;
+    if(cptTill!=null&&cptTill<ACT.cptScale&&life.trials>=ACT.minTrialsScale){
+      flag='green';verdict='scale';issues.push(['green','CPT ₹'+Math.round(cptTill)+' < ₹'+ACT.cptScale+(arTrust?'':' (CAC base building, '+arBase+' trials)')]);
+    } else if(cptTill!=null&&cptTill>T.cpt.a&&life.cost>200&&life.trials>=3&&(cptVsAcct==null||cptVsAcct>ACT.benchMargin)){
+      if(cacVetoesGoodPause){
+        // CAC (even on a thin base) says this is fine — don't pause on CPT alone
+        flag='mod';verdict='watch';
+        issues.push(['mod','CPT ₹'+Math.round(cptTill)+' high but thin-sample CAC ₹'+Math.round(cacMatured)+' ('+arBase+' trials, '+decWindowLabel+') is on target — holding, not pausing']);
+      } else if(cptSharplyImproved){
+        // #2 FIX: recent CPT has improved sharply vs this entity's own trailing weeks —
+        // don't pause on a lifetime CPT number that recent data is actively disproving.
+        flag='mod';verdict='watch';
+        issues.push(['mod','Monitor — CPT improved '+Math.round(cptImprovePct)+'% (L7 ₹'+Math.round(cptL7)+' vs trailing ₹'+Math.round(cptBaseline)+') — recheck AR once cohort matures']);
+      } else {
+        flag='red';verdict='pause';
+        issues.push(['red','CPT ₹'+Math.round(cptTill)+' (lifetime) > ₹'+T.cpt.a+(cptVsAcct!=null?' & '+cptVsAcct.toFixed(0)+'% over acct':'')+(cptL7!=null?' · L7 CPT ₹'+Math.round(cptL7):'')]);
+      }
+    } else if(cptTill!=null&&cptTill>T.cpt.a&&life.cost>200){
+      flag='mod';verdict='watch';issues.push(['mod','CPT ₹'+Math.round(cptTill)+' high but tracking account — give time']);
+    } else if(life.cost>300&&life.trials===0){
+      flag='red';verdict='pause';issues.push(['red','₹'+Math.round(life.cost)+' spent, 0 trials']);
+    } else {
+      flag='mod';verdict='watch';issues.push(['mod','Building signal — '+arBase+' matured trials']);
+    }
   }
   // ── #5 already-actioned suppression (kept internal; ledger shows DRR directly) ──
   let suppressed=false,suppressReason='';
@@ -1173,7 +1225,7 @@ function entMetrics(entKey,entId){
   return {entKey,entId,isPaused,matured,arTrust,flag,verdict,issues,suppressed,suppressReason,
     cost:life.cost,trialsActual,trialsActualWk:arBase,maturedDaysOfHistory,decWindowLabel,
     cptTill,cptWeek,cptΔ,cacTill,cacWeekEst,arTill,arWeekEst,s2tTill,s2tWeek,
-    arLadder,arD0,arD7,arD28,cacD0,cacD7,cacD28,cacLife,headlineAR,headlineARLabel,runDays:rd,drrLast7,drrPrev7,drrW2,drrΔ,cacVsAcct,cptVsAcct,
+    arLadder,arD0,arD7,arD28,arD28_w1,arD28_w2,arD28_15d,arD28_30d,cacD0,cacD7,cacD28,cacLife,headlineAR,headlineARLabel,runDays:rd,drrLast7,drrPrev7,drrW2,drrΔ,cacVsAcct,cptVsAcct,
     acctCac:bench.cac,acctCpt:bench.cpt,
     cptL7,cptW1,cptW2,cac_w1,cac_15,cac_30,cacActTill,cacAct_w1,cacAct_15,cacAct_30,
     s2tL7,s2tW1,s2tW2,csTill,csL7,csW1,csW2,
@@ -1256,6 +1308,10 @@ function ledgerRow(m,isAcct){
     <td>${isAcct?cacCell(m.cac_w1,false,0):cacCellPA(m.cac_w1,m.cacAct_w1,lb,m.trialsActual)}</td>
     <td>${isAcct?cacCell(m.cac_15,false,0):cacCellPA(m.cac_15,m.cacAct_15,lb,m.trialsActual)}</td>
     <td>${isAcct?cacCell(m.cac_30,false,0):cacCellPA(m.cac_30,m.cacAct_30,lb,m.trialsActual)}</td>
+    <td class="grp-div">${isAcct?'<div class="cell" style="color:var(--ink4)">—</div>':'<div class="cell">'+pctc(m.arD28_w1)+'</div>'}</td>
+    <td>${isAcct?'<div class="cell" style="color:var(--ink4)">—</div>':'<div class="cell" '+dim+'>'+pctc(m.arD28_w2)+'</div>'}</td>
+    <td>${isAcct?'<div class="cell" style="color:var(--ink4)">—</div>':'<div class="cell" '+dim+'>'+pctc(m.arD28_15d)+'</div>'}</td>
+    <td>${isAcct?'<div class="cell" style="color:var(--ink4)">—</div>':'<div class="cell" '+dim+'>'+pctc(m.arD28_30d)+'</div>'}</td>
     <td class="grp-div">${s2tD(m.s2tD1,m.s2tD2)}</td>
     <td>${s2tD(m.s2tD2,m.s2tD3)}</td>
     <td>${s2tCell(m.s2tD3)}</td>
@@ -1280,6 +1336,7 @@ function ledgerHeader(){
       <th class="grp-div" colspan="3">CPT Daily (D28-adj)</th>
       <th class="grp-div" colspan="4">CPT Windows (D28-adj)</th>
       <th class="grp-div" colspan="4">CAC matured (proj / actual)</th>
+      <th class="grp-div" colspan="4">AR (D28) Projected</th>
       <th class="grp-div" colspan="3">Signup→Trial % Daily</th>
       <th class="grp-div" colspan="4">Signup→Trial % Windows</th>
     </tr>
@@ -1290,6 +1347,7 @@ function ledgerHeader(){
       <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
       <th class="grp-div">Till</th><th>L7</th><th>W-1</th><th>W-2</th>
       <th class="grp-div">Till</th><th>W-1(7d)</th><th>15d−8</th><th>30d−8</th>
+      <th class="grp-div">W-1</th><th>W-2</th><th>15d−8</th><th>30d−8</th>
       <th class="grp-div">D-1</th><th>D-2</th><th>D-3</th>
       <th class="grp-div">Till</th><th>L7</th><th>W-1</th><th>W-2</th>
     </tr></thead>`;
@@ -1548,12 +1606,12 @@ function creativeFlagAndFatigue(adId){
   const arD0_sc  = (_rawLife.d0&&rawAp7_sc) ? rawAp7_sc/_rawLife.d0*100 : null;
   // AR(D7) = Max(ap14, 1.30×ap7) / Max(d7, d0×1.105)
   const _scCurve=AP_CURVE[MAP_AD[adId]?.source||srcOf(adId)||'facebook'];
-  const arD7num_sc = rawAp7_sc ? Math.max(rawAp14_sc, _scCurve.D14*rawAp7_sc) : 0;
-  const arD7den_sc = _rawLife.d0 ? Math.max(_rawLife.d7||0, _rawLife.d0*EST.d7) : 0;
+  const arD7num_sc = rawAp7_sc ? floorMax(rawAp14_sc, _scCurve.D14*rawAp7_sc) : 0;
+  const arD7den_sc = _rawLife.d0 ? floorMax(_rawLife.d7||0, _rawLife.d0*EST.d7) : 0;
   const arD7_sc  = (arD7num_sc&&arD7den_sc) ? arD7num_sc/arD7den_sc*100 : null;
-  // AR(D28) = Max(ap35, curve.D35×ap7) / Max(d28, d0×1.17)
-  const arD28num_sc = rawAp7_sc ? Math.max(rawAp35_sc, _scCurve.D35*rawAp7_sc) : 0;
-  const arD28den_sc = _rawLife.d0 ? Math.max(_rawLife.d28||0, _rawLife.d0*EST.d28) : 0;
+  // AR(D28) = floorMax(ap35, curve.D35×ap7) / floorMax(d28, d0×1.17)
+  const arD28num_sc = rawAp7_sc ? floorMax(rawAp35_sc, _scCurve.D35*rawAp7_sc) : 0;
+  const arD28den_sc = _rawLife.d0 ? floorMax(_rawLife.d28||0, _rawLife.d0*EST.d28) : 0;
   const arD28_sc = (arD28num_sc&&arD28den_sc) ? arD28num_sc/arD28den_sc*100 : null;
   // CAC at each window
   const cacD0_sc   = rawAp7_sc   ? life60.cost/rawAp7_sc   : null;
