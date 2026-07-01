@@ -431,6 +431,22 @@ const DEMO_GENDER={
 };
 const T={cpt:{g:100,a:150},cac:{g:450,a:500},ctr:{g:.25,a:.15},cpm:{g:20,a:30},c2i:{g:30,a:20},i2s:{g:70,a:50},s2t:{g:20,a:10},apr:{g:28,a:20},hook:{g:15,a:8},hold:{g:25,a:15}};
 function floorMax(a,b){return Math.max(Math.floor(a||0),Math.floor(b||0));}
+// ── Your IF-formula for projected autopay and trials ──
+// projAP35(ap7,ap35,lastDateStr,src):
+//   IF today < lastDate + 35 days → Max(floor(curve.D35×ap7), floor(ap35))  [not yet fully matured]
+//   ELSE → floor(ap35)                                                         [fully matured, actual wins]
+// projD28Trials(d0,d28,lastDateStr):
+//   IF today < lastDate + 27 days → Max(floor(d0×1.17), floor(d28))
+//   ELSE → floor(d28)
+const _TODAY=new Date();_TODAY.setHours(0,0,0,0);
+function daysSince(dateStr){const d=new Date(dateStr);d.setHours(0,0,0,0);return Math.floor((_TODAY-d)/86400000);}
+function projAP35(ap7,ap35,lastDateStr,src){
+  const c=AP_CURVE[src]||AP_CURVE.facebook;
+  const proj=Math.floor((c.D35||1.38)*ap7);
+  return daysSince(lastDateStr)<35 ? floorMax(ap35,proj) : Math.floor(ap35||0);}
+function projD28Trials(d0,d28,lastDateStr){
+  const proj=Math.floor(d0*EST.d28);
+  return daysSince(lastDateStr)<27 ? floorMax(d28||0,proj) : Math.floor(d28||0);}
 const EST={d7:1.105,d14:1.14,d28:1.17};
 // ═══ AUTOPAY COHORT CURVES (#2) — addition over D7 base, by source ═══
 const AP_CURVE={
@@ -580,17 +596,33 @@ const METRIC_DEFS={
     {k:'cpt_est_d28',label:'CPT (D28) Estimated',           fmt:money,   calc:s=>s.d0?s.cost/(s.d0*EST.d28):null,th:[T.cpt.g,T.cpt.a,0],highlight:true},
     {k:'cpt',        label:'CPT Lifetime / Current',         fmt:money,   calc:s=>s.trials?s.cost/s.trials:null,th:[T.cpt.g,T.cpt.a,0]},
     {k:'cac_d7',     label:'CAC (D7) Estimated',            fmt:money,
-      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const ap=floorMax(s.ap14,c.D14*s.ap7);return ap?Math.round(s.cost/ap):null;},
+      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;
+        const c=AP_CURVE[ctx&&ctx.src||'facebook'];const pt=ctx&&ctx.periodTo||'2000-01-01';
+        const ap=daysSince(pt)<14?floorMax(s.ap14,c.D14*s.ap7):Math.floor(s.ap14||0);
+        return ap?Math.round(s.cost/ap):null;},
       th:[T.cac.g,T.cac.a,0],early:true},
     {k:'cac_d28',    label:'CAC (D28) Estimated',           fmt:money,
-      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const ap=floorMax(s.ap35,c.D35*s.ap7);return ap?Math.round(s.cost/ap):null;},
+      calc:(s,ctx)=>{if(!s.ap7||!s.d0)return null;
+        const pt=ctx&&ctx.periodTo||'2000-01-01';const src=ctx&&ctx.src||'facebook';
+        const ap=projAP35(s.ap7,s.ap35,pt,src);
+        return ap?Math.round(s.cost/ap):null;},
       th:[T.cac.g,T.cac.a,0],early:true,highlight:true},
     {k:'ar_life',    label:'AR Lifetime / Current',          fmt:pct,     calc:s=>s.trials&&s.autopays?s.autopays/s.trials*100:null,th:[T.apr.g,T.apr.a,1],early:true},
     {k:'ar_d7',      label:'AR (D7)',                        fmt:pct,
-      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const num=floorMax(s.ap14,c.D14*s.ap7);const den=floorMax(s.d7||0,s.d0*EST.d7);return den?num/den*100:null;},
+      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;
+        const c=AP_CURVE[ctx&&ctx.src||'facebook'];const pt=ctx&&ctx.periodTo||'2000-01-01';
+        // AP numerator: D14 window → mature after 14 days since period end
+        const num=daysSince(pt)<14?floorMax(s.ap14,c.D14*s.ap7):Math.floor(s.ap14||0);
+        // Trial denominator: D7 window → mature after 7 days since period end
+        const den=daysSince(pt)<7?floorMax(s.d7||0,s.d0*EST.d7):Math.floor(s.d7||0);
+        return den?num/den*100:null;},
       th:[T.apr.g,T.apr.a,1],early:true},
     {k:'ar_d28',     label:'AR (D28)',                       fmt:pct,
-      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;const c=AP_CURVE[ctx&&ctx.src||'facebook'];const num=floorMax(s.ap35,c.D35*s.ap7);const den=floorMax(s.d28||0,s.d0*EST.d28);return den?num/den*100:null;},
+      calc:(s,ctx)=>{if(!s.d0||!s.ap7)return null;
+        const pt=ctx&&ctx.periodTo||'2000-01-01';const src=ctx&&ctx.src||'facebook';
+        const num=projAP35(s.ap7,s.ap35,pt,src);
+        const den=projD28Trials(s.d0,s.d28,pt);
+        return den?num/den*100:null;},
       th:[T.apr.g,T.apr.a,1],early:true,highlight:true},
   ],
   marketing:[
@@ -779,7 +811,7 @@ function mtxTableHTML(title,sums,P,extraRows,tagHtml,entitySrc){
           const t=s[tk]||0;if(!t)return null;
           return extraRows?extraRows[idx].projAP[apt]/t*100:null;}
         const _per=P[idx]||P[0];const _pDays=Math.max(1,Math.round((new Date(_per.to)-new Date(_per.from))/86400000)+1);
-        return md.calc(s,{totCost:s.cost,periodDays:_pDays,src:_entSrc||'facebook'});});
+        return md.calc(s,{totCost:s.cost,periodDays:_pDays,src:_entSrc||'facebook',periodTo:_per.to});});
       const v0=vals[0],v1=vals[1];let dHTML='—';
       if(v0!=null&&v1!=null&&v1!==0&&!isNaN(v0)&&!isNaN(v1)){
         const d=(v0-v1)/v1*100,up=d>0,hi=md.th?md.th[2]===1:true,good=hi?up:!up;
@@ -979,13 +1011,24 @@ function entMetrics(entKey,entId){
   const has2wk = maturedDaysOfHistory>=14 && cohort2wk.cost>0;
   const decCohort = has2wk? cohort2wk : cohort1wk;
   const decWindowLabel = has2wk? 'last 2 matured wks' : '1 matured wk';
-  // ── COHORT CAC / AR using PROJECTED autopays (#2: actual where matured, project tail) ──
-  const ap_decCohort = projAutopaysFor(decCohort._from||(has2wk?w2from:w1from), matCut, entKey, entId);
-  const ap_allMatured = projAutopaysFor('2000-01-01', matCut, entKey, entId);
-  const cacMatured = ap_decCohort? decCohort.cost/ap_decCohort : null;
+  // ── COHORT CAC using floorMax(ap35, curve×ap7) — consistent with AR(D28) formula ──
+  // Previously used projAutopaysFor which projected r.autopays (lifetime, includes renewals)
+  // via age-bracket multiplier → systematically deflated CAC vs the AR(D28) formula.
+  // Both cacMatured and AR(D28) now use the same floorMax base so CAC = CPT/AR holds exactly.
+  const _emSrc = srcOf(entId)||'facebook';
+  const _emCrv = AP_CURVE[_emSrc]||AP_CURVE.facebook;
+  // Decision cohort window aggregated via aggRangeFor (has ap7/ap35 columns)
+  const _decFrom = decCohort._from||(has2wk?w2from:w1from);
+  const _decAgg  = aggRangeFor(_decFrom, matCut, entKey, entId);
+  // Use projAP35 with matCut as lastDate — if today<matCut+35 → Max(proj,actual), else actual
+  const ap_decCohort = projAP35(_decAgg.ap7,_decAgg.ap35,matCut,_emSrc);
+  const cacMatured   = ap_decCohort? decCohort.cost/ap_decCohort : null;
+  // All-matured window
+  const _allAgg     = aggRangeFor('2000-01-01', matCut, entKey, entId);
+  const ap_allMatured = projAP35(_allAgg.ap7,_allAgg.ap35,matCut,_emSrc);
   const cacAllMatured = ap_allMatured? cohortAll.cost/ap_allMatured : null;
-  const arMatured = decCohort.trials? ap_decCohort/decCohort.trials*100 : null;
-  const arAllMatured = cohortAll.trials? ap_allMatured/cohortAll.trials*100 : null;
+  const arMatured     = decCohort.trials? ap_decCohort/decCohort.trials*100 : null;
+  const arAllMatured  = cohortAll.trials? ap_allMatured/cohortAll.trials*100 : null;
   // ── #2 AR cohort ladder: AR(Dn)=Dn trials ÷ D(n+7) projected autopays ──
   // headline AR = most-matured cohort available
   // ── AR ladder — correct formula: Max(actual,projected) on both sides ──
@@ -1056,29 +1099,31 @@ function entMetrics(entKey,entId){
   const costD1=d1.cost,costD2=d2.cost,costD3=d3.cost;
   // CAC windows — all matured (exclude last 8 days), D28-adjusted via projected autopays
   // CAC windows — projected (decision) AND actual (honesty check). #5
-  const cac_w1=(function(){const c=aggRangeFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);return ap?c.cost/ap:null;})();
-  const cac_15=(function(){const c=aggRangeFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);return ap?c.cost/ap:null;})();
-  const cac_30=(function(){const c=aggRangeFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);const ap=projAutopaysFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);return ap?c.cost/ap:null;})();
+  const cac_w1=(function(){const w=aggRangeFor(isoBack(ACT.matureDays+7),matCut,entKey,entId);const ap=projAP35(w.ap7,w.ap35,matCut,_emSrc);return ap?w.cost/ap:null;})();
+  const cac_15=(function(){const w=aggRangeFor(isoBack(ACT.matureDays+15),matCut,entKey,entId);const ap=projAP35(w.ap7,w.ap35,matCut,_emSrc);return ap?w.cost/ap:null;})();
+  const cac_30=(function(){const w=aggRangeFor(isoBack(ACT.matureDays+30),matCut,entKey,entId);const ap=projAP35(w.ap7,w.ap35,matCut,_emSrc);return ap?w.cost/ap:null;})();
   // ── AR(D28) Projected — windowed, excluding last matureDays(8) days, same pattern as cac_w1/15/30 ──
   // Formula matches the main AR(D28) calc: floorMax(ap35,curve.D35×ap7) / floorMax(d28,d0×EST.d28)
   const _arCurve=AP_CURVE[srcOf(entId)||'facebook'];
+  // arD28Window: uses projAP35/projD28Trials with matCut as lastDate
+  // (all Actionables windows end at matCut, so matCut is the "last date" for these)
   function arD28Window(daysBack){
     const w=aggRangeFor(isoBack(ACT.matureDays+daysBack),matCut,entKey,entId);
     if(!w.cost||!w.d0)return null;
-    const num=floorMax(w.ap35,_arCurve.D35*w.ap7);
-    const den=floorMax(w.d28||0,w.d0*EST.d28);
+    const num=projAP35(w.ap7,w.ap35,matCut,_emSrc);
+    const den=projD28Trials(w.d0,w.d28,matCut);
     return den?num/den*100:null;
   }
-  const arD28_w1  = arD28Window(7);   // W-1: 8-15d matured
+  const arD28_w1  = arD28Window(7);
   const arD28_w2  = (function(){
     const w=aggRangeFor(isoBack(ACT.matureDays+14),isoBack(ACT.matureDays+7),entKey,entId);
     if(!w.cost||!w.d0)return null;
-    const num=floorMax(w.ap35,_arCurve.D35*w.ap7);
-    const den=floorMax(w.d28||0,w.d0*EST.d28);
+    const num=projAP35(w.ap7,w.ap35,matCut,_emSrc);
+    const den=projD28Trials(w.d0,w.d28,matCut);
     return den?num/den*100:null;
-  })();                                // W-2: 15-22d matured
-  const arD28_15d = arD28Window(15);  // Last 15 matured days: 8-23d
-  const arD28_30d = arD28Window(30);  // Last 30 matured days: 8-38d
+  })();
+  const arD28_15d = arD28Window(15);
+  const arD28_30d = arD28Window(30);
   // ACTUAL (un-projected) CAC = window spend ÷ raw autopays in window (no curve)
   const cacActOf=(daysBack)=>{const c=aggRangeFor(isoBack(ACT.matureDays+daysBack),matCut,entKey,entId);return c.autopays?c.cost/c.autopays:null;};
   const cacAct_w1=cacActOf(7), cacAct_15=cacActOf(15), cacAct_30=cacActOf(30);
@@ -1168,7 +1213,15 @@ function entMetrics(entKey,entId){
     // ── Full CAC trust (≥50 matured trials) — CAC fully drives the verdict ──
     if(cacMatured!=null&&cacMatured<=ACT.cacGood){flag='green';verdict='scale';issues.push(['green','Matured CAC ₹'+Math.round(cacMatured)+' ≤ ₹'+ACT.cacGood+' ('+decWindowLabel+', '+arBase+' trials)']);}
     else if(cacMatured!=null&&cacMatured>ACT.cacGood*1.3&&(cacVsAcct==null||cacVsAcct>ACT.benchMargin)){
-      flag='red';verdict='pause';issues.push(['red','CAC ₹'+Math.round(cacMatured)+' > target ('+decWindowLabel+', '+arBase+' trials)'+(cacVsAcct!=null?' & '+cacVsAcct.toFixed(0)+'% over acct':'')]);}
+      // CAC is bad — but if L7 CPT has improved sharply, recent delivery is genuinely improving.
+      // In that case, downgrade PAUSE → WATCH with a transparent reason.
+      if(cptSharplyImproved){
+        flag='mod';verdict='watch';
+        issues.push(['mod','CAC ₹'+Math.round(cacMatured)+' bad ('+decWindowLabel+') BUT CPT improved '+Math.round(cptImprovePct)+'% (L7 ₹'+Math.round(cptL7||0)+' vs trailing ₹'+Math.round(cptBaseline||0)+') — monitor, recheck AR']);
+      } else {
+        flag='red';verdict='pause';
+        issues.push(['red','CAC ₹'+Math.round(cacMatured)+' > target ('+decWindowLabel+', '+arBase+' trials)'+(cacVsAcct!=null?' & '+cacVsAcct.toFixed(0)+'% over acct':'')+(cptL7?' · L7 CPT ₹'+Math.round(cptL7):'')]);
+      }}
     else if(cacMatured!=null&&cacMatured>ACT.cacGood*1.3){flag='mod';verdict='watch';issues.push(['mod','CAC ₹'+Math.round(cacMatured)+' high but near account avg ('+decWindowLabel+') — give time']);}
     else {flag='mod';verdict='watch';issues.push(['mod','CAC ₹'+(cacMatured?Math.round(cacMatured):'—')+' near target ('+decWindowLabel+') — hold']);}
   } else {
@@ -1606,12 +1659,12 @@ function creativeFlagAndFatigue(adId){
   const arD0_sc  = (_rawLife.d0&&rawAp7_sc) ? rawAp7_sc/_rawLife.d0*100 : null;
   // AR(D7) = Max(ap14, 1.30×ap7) / Max(d7, d0×1.105)
   const _scCurve=AP_CURVE[MAP_AD[adId]?.source||srcOf(adId)||'facebook'];
-  const arD7num_sc = rawAp7_sc ? floorMax(rawAp14_sc, _scCurve.D14*rawAp7_sc) : 0;
-  const arD7den_sc = _rawLife.d0 ? floorMax(_rawLife.d7||0, _rawLife.d0*EST.d7) : 0;
+  // Scorecard lastDate = win60to (end of 60d window)
+  const arD7num_sc = rawAp7_sc ? (daysSince(win60to)<14?floorMax(rawAp14_sc,_scCurve.D14*rawAp7_sc):Math.floor(rawAp14_sc||0)) : 0;
+  const arD7den_sc = _rawLife.d0 ? (daysSince(win60to)<7?floorMax(_rawLife.d7||0,_rawLife.d0*EST.d7):Math.floor(_rawLife.d7||0)) : 0;
   const arD7_sc  = (arD7num_sc&&arD7den_sc) ? arD7num_sc/arD7den_sc*100 : null;
-  // AR(D28) = floorMax(ap35, curve.D35×ap7) / floorMax(d28, d0×1.17)
-  const arD28num_sc = rawAp7_sc ? floorMax(rawAp35_sc, _scCurve.D35*rawAp7_sc) : 0;
-  const arD28den_sc = _rawLife.d0 ? floorMax(_rawLife.d28||0, _rawLife.d0*EST.d28) : 0;
+  const arD28num_sc = rawAp7_sc ? projAP35(rawAp7_sc,rawAp35_sc,win60to,MAP_AD[adId]?.source||'facebook') : 0;
+  const arD28den_sc = _rawLife.d0 ? projD28Trials(_rawLife.d0,_rawLife.d28,win60to) : 0;
   const arD28_sc = (arD28num_sc&&arD28den_sc) ? arD28num_sc/arD28den_sc*100 : null;
   // CAC at each window
   const cacD0_sc   = rawAp7_sc   ? life60.cost/rawAp7_sc   : null;
