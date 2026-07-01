@@ -91,7 +91,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--f);line-height:1.4;
 .ent-cpt{font-family:var(--m);font-weight:700;font-size:12px;padding:3px 9px;border-radius:6px;}
 .gcaret{display:inline-block;width:12px;transition:transform .2s;}
 .mtx-scroll{overflow-x:auto;overflow-y:auto;max-height:72vh;}
-table.mtx{border-collapse:collapse;font-size:11px;width:100%;white-space:nowrap;}
+table.mtx{border-collapse:separate;border-spacing:0;font-size:11px;width:100%;white-space:nowrap;}
 .mtx thead th{background:var(--panel2);padding:8px 12px;text-align:right;font-size:10px;font-weight:700;color:var(--ink2);border-bottom:2px solid var(--line2);position:sticky;top:0;z-index:3;}
 .mtx thead th.metric-col{text-align:left;left:0;z-index:3;background:var(--panel2);min-width:180px;border-right:1px solid var(--line2);}
 .mtx thead th.delta-col{color:var(--brand);border-left:1px solid var(--line2);background:var(--panel3);}
@@ -170,7 +170,7 @@ table.mtx{border-collapse:collapse;font-size:11px;width:100%;white-space:nowrap;
 .sum-card.red .sum-big{color:var(--bad);}.sum-card.green .sum-big{color:var(--good);}.sum-card.mod .sum-big{color:var(--warn);}
 .act-tbl-wrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.03);}
 .act-tbl-scroll{overflow-x:auto;overflow-y:auto;max-height:68vh;}
-table.act{border-collapse:collapse;width:100%;font-size:11px;white-space:nowrap;}
+table.act{border-collapse:separate;border-spacing:0;width:100%;font-size:11px;white-space:nowrap;}
 .act thead th{background:var(--panel2);padding:9px 10px;text-align:right;font-size:9.5px;font-weight:700;color:var(--ink2);border-bottom:2px solid var(--line2);position:sticky;top:0;z-index:3;}
 .act thead th.l{text-align:left;}
 .act thead th.ent-col{left:0;position:sticky;z-index:4;background:var(--panel2);min-width:230px;border-right:1px solid var(--line2);}
@@ -218,8 +218,8 @@ table.act{border-collapse:collapse;width:100%;font-size:11px;white-space:nowrap;
 .led-flag-head.mod{background:var(--warnbg);color:var(--warn);border:1px solid rgba(217,138,0,.25);}
 table.act.led{font-size:10px;}
 .act.led thead th{font-size:9px;padding:6px 8px;}
-.led-grouphead th{background:var(--panel3);border-bottom:1px solid var(--line2);text-align:center;color:var(--brand);font-size:8.5px;letter-spacing:.4px;text-transform:uppercase;position:sticky;top:0;z-index:4;}
-.led-subhead th{background:var(--panel2);font-size:8.5px;top:26px;position:sticky;top:28px;z-index:3;}
+.led-grouphead th{background:var(--panel3);border-bottom:1px solid var(--line2);text-align:center;color:var(--brand);font-size:8.5px;letter-spacing:.4px;text-transform:uppercase;padding:6px 8px;position:sticky;top:0;z-index:4;}
+.led-subhead th{background:var(--panel2);font-size:8.5px;padding:6px 8px;position:sticky;top:22px;z-index:3;}
 .act.led .led-c-col{left:0;position:sticky;z-index:4;background:var(--panel2);min-width:150px;border-right:1px solid var(--line2);}
 .act.led tbody td.led-c-col{background:var(--panel);z-index:2;}
 .led-id{text-align:left;font-family:var(--f);padding:6px 8px!important;max-width:150px;}
